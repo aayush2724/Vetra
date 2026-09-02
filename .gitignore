@@ -1,0 +1,40 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+
+# Data & artifacts (regenerate with `make data` / `make train`)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+artifacts/models/*
+!artifacts/models/.gitkeep
+artifacts/reports/*
+!artifacts/reports/.gitkeep
+
+# Local runtime state
+*.db
+*.sqlite
+*.sqlite3
+edge/*.db
+server/*.db
+
+# Secrets
+.env
+.env.local
+serviceAccountKey.json
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
