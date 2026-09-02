@@ -1,0 +1,185 @@
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+18:36:52 INFO    vetra.agent: model backend: tflite:vetra_dx_edge.tflite
+18:36:52 INFO    vetra.sync: cloud sync started -> http://localhost:4000
+18:36:52 WARNING vetra.agent: no MQTT broker at localhost:1883 ([Errno 111] Connection refused); REST ingestion still active
+18:36:52 INFO    vetra.agent: REST ingestion on http://0.0.0.0:5001/ingest
+18:36:52 INFO    vetra.agent: status at http://0.0.0.0:5001/status
+18:36:54 WARNING vetra.agent: [OPENED] GO-0006 severity=medium notify=farmer :: GO-0006: possible diabetes / metabolic disorder (100% confidence).
+18:36:54 WARNING vetra.agent: [OPENED] SH-0007 severity=low notify=farmer_digest :: SH-0007: possible obesity / over-conditioning (100% confidence).
+18:36:56 WARNING vetra.agent: [ESCALATED] SH-0007 severity=medium notify=farmer :: SH-0007: possible obesity / over-conditioning (100% confidence).
+18:36:57 INFO    vetra.sync: synced 12 animals rows
+18:36:57 INFO    vetra.sync: synced 200 telemetry rows
+18:36:57 INFO    vetra.sync: synced 192 diagnoses rows
+18:36:57 INFO    vetra.sync: synced 2 alerts rows
+18:36:58 INFO    vetra.sync: synced 200 telemetry rows
+18:36:58 INFO    vetra.sync: synced 57 diagnoses rows
+18:36:59 INFO    vetra.sync: synced 200 telemetry rows
+18:36:59 INFO    vetra.sync: synced 51 diagnoses rows
+18:37:00 WARNING vetra.agent: [OPENED] BU-0001 severity=high notify=farmer,veterinarian :: BU-0001: possible respiratory disease (98% confidence).
+18:37:00 INFO    vetra.sync: synced 200 telemetry rows
+18:37:00 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:00 INFO    vetra.sync: synced 1 alerts rows
+18:37:01 WARNING vetra.agent: [OPENED] BU-0009 severity=critical notify=farmer,veterinarian,emergency :: BU-0009: possible cardiac disorder (98% confidence).
+18:37:01 INFO    vetra.sync: synced 200 telemetry rows
+18:37:01 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:01 INFO    vetra.sync: synced 1 alerts rows
+18:37:02 INFO    vetra.sync: synced 200 telemetry rows
+18:37:02 INFO    vetra.sync: synced 52 diagnoses rows
+18:37:03 INFO    vetra.sync: synced 200 telemetry rows
+18:37:03 INFO    vetra.sync: synced 56 diagnoses rows
+18:37:04 WARNING vetra.agent: [OPENED] GO-0002 severity=critical notify=farmer,veterinarian,emergency :: GO-0002: possible infectious disease (74% confidence).
+18:37:04 INFO    vetra.sync: synced 200 telemetry rows
+18:37:04 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:04 INFO    vetra.sync: synced 1 alerts rows
+18:37:05 INFO    vetra.sync: synced 200 telemetry rows
+18:37:05 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:06 WARNING vetra.agent: [OPENED] SH-0011 severity=medium notify=farmer :: SH-0011: possible mobility disorder / lameness (100% confidence).
+18:37:06 INFO    vetra.sync: synced 200 telemetry rows
+18:37:06 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:06 INFO    vetra.sync: synced 1 alerts rows
+18:37:07 INFO    vetra.sync: synced 200 telemetry rows
+18:37:07 INFO    vetra.sync: synced 48 diagnoses rows
+18:37:09 INFO    vetra.sync: synced 200 telemetry rows
+18:37:09 INFO    vetra.sync: synced 55 diagnoses rows
+18:37:10 INFO    vetra.sync: synced 200 telemetry rows
+18:37:10 INFO    vetra.sync: synced 53 diagnoses rows
+18:37:11 INFO    vetra.sync: synced 200 telemetry rows
+18:37:11 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:12 INFO    vetra.sync: synced 200 telemetry rows
+18:37:12 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:13 INFO    vetra.sync: synced 200 telemetry rows
+18:37:13 INFO    vetra.sync: synced 56 diagnoses rows
+18:37:14 INFO    vetra.sync: synced 200 telemetry rows
+18:37:14 INFO    vetra.sync: synced 52 diagnoses rows
+18:37:14 WARNING vetra.agent: [OPENED] GO-0010 severity=high notify=farmer,veterinarian :: GO-0010: possible heat stress (98% confidence). Temperature-humidity index 81 — mild heat load across the herd
+18:37:15 INFO    vetra.sync: synced 200 telemetry rows
+18:37:15 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:15 INFO    vetra.sync: synced 1 alerts rows
+18:37:16 INFO    vetra.sync: synced 200 telemetry rows
+18:37:16 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:17 INFO    vetra.sync: synced 200 telemetry rows
+18:37:17 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:18 INFO    vetra.sync: synced 200 telemetry rows
+18:37:18 INFO    vetra.sync: synced 54 diagnoses rows
+18:37:19 INFO    vetra.sync: synced 200 telemetry rows
+18:37:19 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:20 INFO    vetra.sync: synced 200 telemetry rows
+18:37:20 INFO    vetra.sync: synced 54 diagnoses rows
+18:37:20 WARNING vetra.agent: [ESCALATED] GO-0010 severity=critical notify=farmer,veterinarian,emergency :: GO-0010: possible heat stress (100% confidence). Temperature-humidity index 89 — severe heat load, act now
+18:37:20 WARNING vetra.agent: [ESCALATED] BU-0001 severity=critical notify=farmer,veterinarian,emergency :: BU-0001: possible respiratory disease (100% confidence). Oxygen saturation fell to 91%
+18:37:21 INFO    vetra.sync: synced 200 telemetry rows
+18:37:21 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:21 INFO    vetra.sync: synced 2 alerts rows
+18:37:22 INFO    vetra.sync: synced 200 telemetry rows
+18:37:22 INFO    vetra.sync: synced 48 diagnoses rows
+18:37:23 INFO    vetra.sync: synced 200 telemetry rows
+18:37:23 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:24 INFO    vetra.sync: synced 200 telemetry rows
+18:37:24 INFO    vetra.sync: synced 60 diagnoses rows
+18:37:25 INFO    vetra.sync: synced 200 telemetry rows
+18:37:25 INFO    vetra.sync: synced 48 diagnoses rows
+18:37:26 INFO    vetra.sync: synced 200 telemetry rows
+18:37:27 INFO    vetra.sync: synced 200 telemetry rows
+18:37:28 INFO    vetra.sync: synced 200 telemetry rows
+18:37:29 INFO    vetra.sync: synced 200 telemetry rows
+18:37:30 INFO    vetra.sync: synced 200 telemetry rows
+18:37:31 INFO    vetra.sync: synced 200 telemetry rows
+18:37:32 INFO    vetra.sync: synced 200 telemetry rows
+18:37:33 INFO    vetra.sync: synced 200 telemetry rows
+18:37:34 INFO    vetra.sync: synced 200 telemetry rows
+18:37:35 INFO    vetra.sync: synced 200 telemetry rows
+18:37:36 INFO    vetra.sync: synced 200 telemetry rows
+18:37:37 INFO    vetra.sync: synced 200 telemetry rows
+18:37:38 INFO    vetra.sync: synced 200 telemetry rows
+18:37:40 INFO    vetra.sync: synced 200 telemetry rows
+18:37:41 INFO    vetra.sync: synced 200 telemetry rows
+18:37:42 INFO    vetra.sync: synced 200 telemetry rows
+18:37:43 INFO    vetra.sync: synced 200 telemetry rows
+18:37:44 INFO    vetra.sync: synced 200 telemetry rows
+18:37:45 INFO    vetra.sync: synced 200 telemetry rows
+18:37:46 INFO    vetra.sync: synced 200 telemetry rows
+18:37:47 INFO    vetra.sync: synced 200 telemetry rows
+18:37:48 INFO    vetra.sync: synced 200 telemetry rows
+18:37:49 INFO    vetra.sync: synced 200 telemetry rows
+18:37:50 INFO    vetra.sync: synced 200 telemetry rows
+18:37:51 INFO    vetra.sync: synced 200 telemetry rows
+18:37:52 INFO    vetra.sync: synced 200 telemetry rows
+18:37:53 INFO    vetra.sync: synced 200 telemetry rows
+18:37:54 INFO    vetra.sync: synced 200 telemetry rows
+18:37:55 INFO    vetra.sync: synced 200 telemetry rows
+18:37:56 INFO    vetra.sync: synced 200 telemetry rows
+18:37:57 INFO    vetra.sync: synced 200 telemetry rows
+18:37:58 INFO    vetra.sync: synced 200 telemetry rows
+18:37:59 INFO    vetra.sync: synced 200 telemetry rows
+18:38:00 INFO    vetra.sync: synced 200 telemetry rows
+18:38:01 INFO    vetra.sync: synced 200 telemetry rows
+18:38:02 INFO    vetra.sync: synced 200 telemetry rows
+18:38:03 INFO    vetra.sync: synced 200 telemetry rows
+18:38:04 INFO    vetra.sync: synced 200 telemetry rows
+18:38:05 INFO    vetra.sync: synced 200 telemetry rows
+18:38:06 INFO    vetra.sync: synced 200 telemetry rows
+18:38:07 INFO    vetra.sync: synced 200 telemetry rows
+18:38:08 INFO    vetra.sync: synced 200 telemetry rows
+18:38:09 INFO    vetra.sync: synced 200 telemetry rows
+18:38:10 INFO    vetra.sync: synced 200 telemetry rows
+18:38:11 INFO    vetra.sync: synced 200 telemetry rows
+18:38:12 INFO    vetra.sync: synced 200 telemetry rows
+18:38:13 INFO    vetra.sync: synced 200 telemetry rows
+18:38:14 INFO    vetra.sync: synced 200 telemetry rows
+18:38:15 INFO    vetra.sync: synced 200 telemetry rows
+18:38:16 INFO    vetra.sync: synced 200 telemetry rows
+18:38:17 INFO    vetra.sync: synced 200 telemetry rows
+18:38:19 INFO    vetra.sync: synced 200 telemetry rows
+18:38:20 INFO    vetra.sync: synced 200 telemetry rows
+18:38:21 INFO    vetra.sync: synced 200 telemetry rows
+18:38:22 INFO    vetra.sync: synced 200 telemetry rows
+18:38:23 INFO    vetra.sync: synced 200 telemetry rows
+18:38:24 INFO    vetra.sync: synced 200 telemetry rows
+18:38:25 INFO    vetra.sync: synced 200 telemetry rows
+18:38:26 INFO    vetra.sync: synced 200 telemetry rows
+18:38:27 INFO    vetra.sync: synced 200 telemetry rows
+18:38:28 INFO    vetra.sync: synced 200 telemetry rows
+18:38:29 INFO    vetra.sync: synced 200 telemetry rows
+18:38:30 INFO    vetra.sync: synced 200 telemetry rows
+18:38:31 INFO    vetra.sync: synced 200 telemetry rows
+18:38:32 INFO    vetra.sync: synced 200 telemetry rows
+18:38:33 INFO    vetra.sync: synced 200 telemetry rows
+18:38:34 INFO    vetra.sync: synced 200 telemetry rows
+18:38:35 INFO    vetra.sync: synced 200 telemetry rows
+18:38:36 INFO    vetra.sync: synced 200 telemetry rows
+18:38:37 INFO    vetra.sync: synced 200 telemetry rows
+18:38:38 INFO    vetra.sync: synced 200 telemetry rows
+18:38:39 INFO    vetra.sync: synced 200 telemetry rows
+18:38:40 INFO    vetra.sync: synced 200 telemetry rows
+18:38:41 INFO    vetra.sync: synced 200 telemetry rows
+18:38:42 INFO    vetra.sync: synced 200 telemetry rows
+18:38:43 INFO    vetra.sync: synced 200 telemetry rows
+18:38:44 INFO    vetra.sync: synced 200 telemetry rows
+18:38:45 INFO    vetra.sync: synced 200 telemetry rows
+18:38:46 INFO    vetra.sync: synced 200 telemetry rows
+18:38:47 INFO    vetra.sync: synced 200 telemetry rows
+18:38:48 INFO    vetra.sync: synced 200 telemetry rows
+18:38:49 INFO    vetra.sync: synced 200 telemetry rows
+18:38:50 INFO    vetra.sync: synced 200 telemetry rows
+18:38:51 INFO    vetra.sync: synced 200 telemetry rows
+18:38:52 INFO    vetra.sync: synced 200 telemetry rows
+18:38:53 INFO    vetra.agent: shutting down ...
+18:38:53 WARNING vetra.sync: sync failed for telemetry: URLError: <urlopen error [Errno 111] Connection refused>
+Traceback (most recent call last):
+  File "/home/aayush27/Documents/Projects/vetra/edge/agent.py", line 343, in <module>
+    main()
+  File "/home/aayush27/Documents/Projects/vetra/edge/agent.py", line 339, in main
+    log.info("final status: %s", json.dumps(agent.status()["counters"]))
+                                            ^^^^^^^^^^^^^^
+  File "/home/aayush27/Documents/Projects/vetra/edge/agent.py", line 125, in status
+    "store": self.store.stats(),
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/aayush27/Documents/Projects/vetra/edge/store.py", line 305, in stats
+    with self._cursor() as cur:
+  File "/usr/lib64/python3.11/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/home/aayush27/Documents/Projects/vetra/edge/store.py", line 106, in _cursor
+    cur = self._conn.cursor()
+          ^^^^^^^^^^^^^^^^^^^
+sqlite3.ProgrammingError: Cannot operate on a closed database.

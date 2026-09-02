@@ -1,0 +1,5 @@
+Vetra cloud listening on http://localhost:4000
+  database   /home/aayush27/Documents/Projects/vetra/server/vetra_cloud.db
+  sync auth  open (set VETRA_API_KEY to require one)
+
+shutting down ...

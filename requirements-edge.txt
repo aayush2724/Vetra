@@ -1,0 +1,17 @@
+# Minimal dependency set for the farm gateway.
+#
+# TensorFlow is ~600 MB and is only needed to *train* and *convert* models.
+# The device runs the exported .tflite file through ai-edge-litert, which is a
+# few megabytes, so a Raspberry-Pi-class board never installs TensorFlow.
+#
+#   pip install -r requirements-edge.txt
+
+numpy>=2.0
+pandas>=2.2
+ai-edge-litert>=1.0    # TFLite interpreter, without TensorFlow
+paho-mqtt>=2.1         # optional: REST ingestion works without a broker
+
+# joblib + scikit-learn are only needed if the device falls back to the
+# classical model instead of the TFLite one.
+# joblib>=1.4
+# scikit-learn>=1.5

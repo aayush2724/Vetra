@@ -194,9 +194,13 @@ class AlertEngine:
         if existing is None:
             events.append(AlertEvent("opened", self._new_alert(diagnosis, severity, observed_at, agreeing)))
         else:
+            # Read the prior severity first: _update_alert writes the new value
+            # into this same dict, so comparing afterwards always sees equality
+            # and no escalation would ever be reported.
+            previous_severity = existing["severity"]
             updated = self._update_alert(existing, diagnosis, severity, observed_at, agreeing)
             # Only re-notify when things got worse; a steady alert stays quiet.
-            if SEVERITY_RANK[severity] > SEVERITY_RANK[existing["severity"]]:
+            if SEVERITY_RANK[severity] > SEVERITY_RANK[previous_severity]:
                 events.append(AlertEvent("escalated", updated))
 
         return self._emit(events)

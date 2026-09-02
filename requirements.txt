@@ -1,0 +1,22 @@
+# Vetra ML / edge dependencies.
+#
+# Python 3.11 is required: TensorFlow has no wheels for 3.13+ yet, and the
+# system Python on many current distributions is already past that.
+#
+#   python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# --- data and classical models ---
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.5
+joblib>=1.4
+pyarrow>=16.0          # parquet for the raw telemetry and window tables
+
+# --- neural network training and TFLite conversion (development machine) ---
+tensorflow-cpu==2.21.0
+
+# --- ingestion ---
+paho-mqtt>=2.1         # optional: REST ingestion works without a broker
+
+# --- tests ---
+pytest>=8.0
