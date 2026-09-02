@@ -23,6 +23,7 @@ artifacts/reports/*
 !artifacts/reports/.gitkeep
 
 # Local runtime state
+.demo-logs/
 *.db
 *.sqlite
 *.sqlite3
