@@ -278,7 +278,14 @@ export class HealthRecordRepository {
   listAlerts({ status, severity, limit = 100 } = {}) {
     const where = [];
     const params = [];
-    if (status) { where.push('status = ?'); params.push(status); }
+    if (status) {
+      if (status === 'active') {
+        where.push("status IN ('open', 'acknowledged')");
+      } else {
+        where.push('status = ?');
+        params.push(status);
+      }
+    }
     if (severity) { where.push('severity = ?'); params.push(severity); }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     return this.db.prepare(`

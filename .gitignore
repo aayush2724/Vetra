@@ -29,6 +29,9 @@ artifacts/reports/*
 *.sqlite3
 edge/*.db
 server/*.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # Secrets
 .env

@@ -36,7 +36,7 @@ export default function App() {
   const load = useCallback(async () => {
     try {
       const [summaryData, animalData, alertData] = await Promise.all([
-        getSummary(), getAnimals(), getAlerts('open'),
+        getSummary(), getAnimals(), getAlerts('active'),
       ]);
       setSummary(summaryData);
       setAnimals(animalData.animals);
@@ -76,7 +76,7 @@ export default function App() {
           // The gateway re-sends an alert whenever it escalates, so replace in
           // place rather than accumulating duplicates of the same alert_id.
           const rest = previous.filter((a) => a.alert_id !== alert.alert_id);
-          return alert.status === 'open' ? [alert, ...rest] : rest;
+          return (alert.status === 'open' || alert.status === 'acknowledged') ? [alert, ...rest] : rest;
         });
       },
       onAlertUpdated: () => load(),

@@ -162,9 +162,23 @@ describe('alert actions', () => {
     assert.equal((await post('/api/alerts/a-1/acknowledge', { acknowledged_by: 'vet-2' })).status, 409);
   });
 
+  test('active filter keeps acknowledged alerts, open filter drops them', async () => {
+    // The dashboard lists `active` so a seen-but-unresolved alert stays on screen.
+    const { alerts: open } = await (await get('/api/alerts?status=open')).json();
+    assert.equal(open.length, 0);
+    const { alerts: active } = await (await get('/api/alerts?status=active')).json();
+    assert.deepEqual(active.map((a) => a.alert_id), ['a-1']);
+    assert.equal(active[0].status, 'acknowledged');
+  });
+
   test('resolve succeeds once, then conflicts', async () => {
     assert.equal((await post('/api/alerts/a-1/resolve', {})).status, 200);
     assert.equal((await post('/api/alerts/a-1/resolve', {})).status, 409);
+  });
+
+  test('resolved alerts drop out of the active list', async () => {
+    const { alerts } = await (await get('/api/alerts?status=active')).json();
+    assert.equal(alerts.length, 0);
   });
 
   test('acting on an unknown alert conflicts rather than 500s', async () => {
