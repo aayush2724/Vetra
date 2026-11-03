@@ -21,7 +21,7 @@ import pandas as pd
 
 from ..config import RANDOM_SEED, SAMPLE_INTERVAL_MIN
 from ..schema import CONDITIONS, SPECIES
-from .conditions import signature_for
+from .conditions import ConditionSignature, signature_for
 from .species import SpeciesProfile, profile_for
 
 MINUTES_PER_DAY = 24 * 60
@@ -99,10 +99,19 @@ def simulate_animal(
     start: datetime,
     days: int,
     rng: np.random.Generator,
+    *,
+    signature: ConditionSignature | None = None,
+    ambient_shift_c: float = 0.0,
+    humidity_shift: float = 0.0,
 ) -> pd.DataFrame:
-    """Render one animal's minute-resolution telemetry as a DataFrame."""
+    """Render one animal's minute-resolution telemetry as a DataFrame.
+
+    `signature` overrides the one named by `plan.condition`, so a presentation
+    described symptom by symptom can be rendered without being a known disease.
+    The ambient shifts move the weather away from the default hot season.
+    """
     profile: SpeciesProfile = profile_for(plan.species)
-    signature = signature_for(plan.condition)
+    signature = signature or signature_for(plan.condition)
 
     n = days * MINUTES_PER_DAY // SAMPLE_INTERVAL_MIN
     t = np.arange(n)
@@ -126,6 +135,9 @@ def simulate_animal(
 
     # --- Layer 2: circadian + environmental dynamics ----------------------
     ambient_temp, humidity = _ambient_conditions(minute_of_day, day_index, rng)
+    if ambient_shift_c or humidity_shift:
+        ambient_temp = np.clip(ambient_temp + ambient_shift_c, -5.0, 52.0)
+        humidity = np.clip(humidity + humidity_shift, 5.0, 99.0)
     severity = _severity_curve(n, plan, signature.chronic)
 
     if signature.heat_driven:
@@ -190,8 +202,10 @@ def simulate_animal(
 
     # A cardiac animal cannot bring its rate down when it stops moving; encode
     # that decoupling explicitly, since the mean rate alone under-describes it.
-    if plan.condition == "cardiac_disorder":
-        channel_arrays["heart_rate"] = channel_arrays["heart_rate"] + 12.0 * severity * (1.0 - effort)
+    if signature.rest_heart_rate:
+        channel_arrays["heart_rate"] = (
+            channel_arrays["heart_rate"] + signature.rest_heart_rate * severity * (1.0 - effort)
+        )
 
     heart_rate = np.clip(channel_arrays["heart_rate"], 10.0, 250.0)
     respiratory_rate = np.clip(channel_arrays["respiratory_rate"], 4.0, 120.0)

@@ -27,6 +27,8 @@ class ConditionSignature:
     heat_driven: bool = False
     # Chronic conditions hold a steady severity; acute ones ramp from onset.
     chronic: bool = False
+    # Extra bpm at full severity that persists when the animal stops moving.
+    rest_heart_rate: float = 0.0
     hallmark: str = ""
 
 
@@ -47,6 +49,7 @@ SIGNATURES: dict[str, ConditionSignature] = {
         },
         noise_scale={"heart_rate": 2.4, "spo2": 1.5},
         distance_factor=0.65,
+        rest_heart_rate=12.0,
         hallmark="resting tachycardia with high beat-to-beat irregularity",
     ),
 
