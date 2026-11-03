@@ -257,6 +257,52 @@ main { padding: 20px; max-width: 1400px; width: 100%; margin: 0 auto; flex: 1; }
 .tl-row .c { font-weight: 550; color: var(--sev); }
 .tl-row .p { font-variant-numeric: tabular-nums; color: var(--text-dim); }
 
+/* --- symptom check ----------------------------------------------------- */
+.symptom-form { display: flex; flex-direction: column; gap: 16px; }
+.field-row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.field-row { padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.field-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.field > span {
+  font-size: 11px; font-weight: 600; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.field select {
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 9px; width: 100%;
+}
+.field select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field.changed select { border-color: var(--high); background: var(--high-soft); }
+.form-actions { display: flex; gap: 8px; }
+.form-actions .btn { padding: 8px 16px; font-size: 13px; }
+
+.dx-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 14px 16px; border-radius: var(--radius);
+  background: var(--sev-soft); border-left: 4px solid var(--sev);
+}
+.dx-label { font-size: 20px; font-weight: 650; color: var(--sev); letter-spacing: -0.01em; }
+.dx-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.dx-note {
+  margin: 12px 0 0; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+  background: var(--medium-soft); color: var(--text);
+}
+.dx-h {
+  font-size: 11px; font-weight: 650; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: 0.05em; margin: 18px 0 6px;
+}
+.dx-advice { margin: 0; font-size: 14px; }
+.dx-findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.dx-bars { display: flex; flex-direction: column; gap: 6px; }
+.dx-bar { display: grid; grid-template-columns: minmax(0, 190px) 1fr 44px; gap: 10px; align-items: center; font-size: 12px; }
+.dx-bar .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); }
+.dx-bar .track { height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.dx-bar .fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.dx-bar .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.dx .vitals { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+.dx-disclaimer { margin: 16px 0 0; font-size: 11.5px; color: var(--text-faint); }
+
 /* --- misc -------------------------------------------------------------- */
 .empty { padding: 36px 16px; text-align: center; color: var(--text-faint); }
 .empty strong { display: block; color: var(--text-dim); margin-bottom: 3px; font-size: 14px; }

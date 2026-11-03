@@ -31,6 +31,10 @@ export const acknowledgeAlert = (id, who) =>
 export const resolveAlert = (id) =>
   json(`/api/alerts/${encodeURIComponent(id)}/resolve`, { method: 'POST' });
 
+export const getSymptomCatalog = () => json('/api/symptoms');
+export const diagnoseSymptoms = (check) =>
+  json('/api/diagnose', { method: 'POST', body: JSON.stringify(check) });
+
 /**
  * Subscribe to server-sent events. Returns an unsubscribe function.
  * EventSource reconnects on its own, so there is no retry logic here.

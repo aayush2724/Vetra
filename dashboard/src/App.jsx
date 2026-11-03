@@ -4,6 +4,7 @@ import {
 } from './api.js';
 import AlertFeed from './components/AlertFeed.jsx';
 import HerdGrid from './components/HerdGrid.jsx';
+import SymptomCheck from './components/SymptomCheck.jsx';
 
 // The charting library is by far the largest dependency and is only needed once
 // someone opens an individual animal. Splitting it keeps the alert screen — the
@@ -118,7 +119,7 @@ export default function App() {
         </div>
 
         <nav className="tabs" role="tablist">
-          {[['overview', 'Overview'], ['herd', 'Herd']].map(([key, label]) => (
+          {[['overview', 'Overview'], ['herd', 'Herd'], ['symptoms', 'Symptom check']].map(([key, label]) => (
             <button
               key={key} role="tab" aria-selected={tab === key}
               onClick={() => setTab(key)}
@@ -150,7 +151,9 @@ export default function App() {
                 sub="from farm gateway" />
         </div>
 
-        {tab === 'overview' ? (
+        {tab === 'symptoms' ? (
+          <SymptomCheck />
+        ) : tab === 'overview' ? (
           <div className="columns">
             <section className="card">
               <div className="card-head">
