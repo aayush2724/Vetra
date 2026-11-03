@@ -9,7 +9,9 @@ PYTHON311 ?= python3.11
 
 .DEFAULT_GOAL := help
 .PHONY: help setup data train train-ml train-nn export evaluate test test-py test-js \
-        server dashboard dashboard-build gateway simulate demo stop clean clean-data
+        server dashboard dashboard-build gateway simulate demo stop clean clean-data \
+        docker-build docker-up docker-demo docker-train docker-test docker-logs \
+        docker-down docker-clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -84,3 +86,44 @@ clean:  ## Remove local databases and Python caches
 clean-data:  ## Also remove generated datasets and trained models
 	rm -rf data/raw/* data/processed/* artifacts/models/* artifacts/reports/*
 	@touch data/raw/.gitkeep data/processed/.gitkeep artifacts/models/.gitkeep artifacts/reports/.gitkeep
+
+# --- docker --------------------------------------------------------------
+# Everything above, as containers. See docker-compose.yml for the services and
+# .env.example for the settings.
+COMPOSE      := docker compose
+ALL_PROFILES := --profile demo --profile ml --profile mqtt
+
+docker-build:  ## Build the cloud, edge and ML images
+	$(COMPOSE) $(ALL_PROFILES) build
+
+docker-up:  ## Start the cloud service and the edge gateway in the background
+	$(COMPOSE) up -d --build cloud gateway
+	@echo "Dashboard  http://localhost:$${CLOUD_PORT:-4000}"
+	@echo "Gateway    http://localhost:$${GATEWAY_PORT:-5001}/status"
+
+docker-demo:  ## Start everything in Docker and stream a herd through it
+	$(COMPOSE) --profile demo build
+	$(COMPOSE) --profile demo run --rm simulator
+	@echo ""
+	@echo "Alerts raised:"
+	@$(COMPOSE) logs --no-log-prefix gateway | grep -E "OPENED|ESCALATED" | sed 's/.*vetra.agent: /  /' || echo "  (none yet)"
+	@echo ""
+	@echo "Dashboard  http://localhost:$${CLOUD_PORT:-4000}"
+	@echo "Gateway    http://localhost:$${GATEWAY_PORT:-5001}/status"
+	@echo "Stop with  make docker-down"
+
+docker-train:  ## Generate the data and train the models inside Docker (fresh clone)
+	$(COMPOSE) --profile ml run --rm --build trainer
+
+docker-test:  ## Run both test suites inside the containers
+	$(COMPOSE) --profile ml run --rm --build trainer python -m pytest tests/ -q
+	$(COMPOSE) run --rm --no-deps --build cloud npm test
+
+docker-logs:  ## Follow the containers' logs
+	$(COMPOSE) $(ALL_PROFILES) logs -f
+
+docker-down:  ## Stop the containers; the databases stay in their volumes
+	$(COMPOSE) $(ALL_PROFILES) down
+
+docker-clean:  ## Stop the containers and delete their database volumes
+	$(COMPOSE) $(ALL_PROFILES) down -v

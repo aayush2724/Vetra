@@ -167,6 +167,35 @@ permanent health record and are never pruned. On a constrained device or a
 metered link, `SyncConfig.upload_telemetry = False` keeps diagnoses and alerts
 flowing while leaving bulk vitals on the device.
 
+## Deployment
+
+`docker-compose.yml` runs the system as three images, built from the
+Dockerfiles in `docker/`:
+
+| Image | Base | Contents | Services |
+|---|---|---|---|
+| `vetra/cloud` | `node:20-slim` | records API + the built dashboard | `cloud` |
+| `vetra/edge` | `python:3.11-slim` | gateway and simulator, with the TFLite runtime and no TensorFlow | `gateway`, `simulator` |
+| `vetra/ml` | `python:3.11-slim` | the full training toolchain | `trainer` |
+
+Two choices follow from the constraint at the top of this document.
+
+The trained model is bind-mounted into the gateway from `./artifacts` rather
+than baked into the image. A retrained model is therefore a restart, not a
+rebuild, and the image is the same whether the deployed file is the 12 KB
+dynamic-int8 variant or a float32 fallback. On a fresh clone the gateway
+container waits for the file and says so, instead of crash-looping.
+
+The gateway declares no dependency on the cloud service. It must start and
+diagnose with the cloud absent, exactly as it would in the field, and its sync
+loop finds the service whenever it appears. The simulator, which exists only
+for demonstrations, is the one service that waits for both.
+
+Each database is a named volume (`vetra_cloud-db`, `vetra_edge-db`), so records
+persist across `docker compose down`; only `down -v` removes them. The MQTT
+broker is optional (profile `mqtt`); the gateway keeps retrying it in the
+background rather than giving up if it was not yet up at boot.
+
 ## Security
 
 The scope here is a college project, and the authentication is deliberately

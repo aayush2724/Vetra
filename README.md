@@ -105,7 +105,8 @@ runs offline, and the alert policy suppresses noise without losing sick animals.
 
 ## Quick start
 
-Requires **Python 3.11** (TensorFlow has no wheels for 3.13+) and **Node 20+**.
+Requires **Python 3.11** (TensorFlow has no wheels for 3.13+) and **Node 20+**,
+or just Docker — see [Running with Docker](#running-with-docker).
 
 ```bash
 make setup     # virtualenv + Python and Node dependencies
@@ -122,8 +123,52 @@ and prints the alerts it raised. `make stop` shuts everything down.
 
 ```bash
 make evaluate  # alert-policy measurement on held-out animals
-make test      # 70 Python tests + 18 Node tests
+make test      # 91 Python tests + 27 Node tests
 make help      # everything else
+```
+
+### Running with Docker
+
+The same system runs as containers, with nothing installed locally but Docker:
+
+```bash
+make docker-train   # fresh clone only: build the dataset and train the models (~10 min)
+make docker-demo    # build the images, start the cloud service and the gateway, stream a herd
+make docker-down    # stop everything; the databases stay in their Docker volumes
+```
+
+Then open **http://localhost:4000**, as before.
+
+| Service | Image | What it runs |
+|---|---|---|
+| `cloud` | `vetra/cloud` | the Node.js API with the built dashboard, on :4000 |
+| `gateway` | `vetra/edge` | the edge agent with the TFLite runtime (no TensorFlow), on :5001 |
+| `simulator` | `vetra/edge` | the collar simulator — profile `demo`, runs once and exits |
+| `trainer` | `vetra/ml` | the ML pipeline — profile `ml`, runs once and exits |
+| `mosquitto` | `eclipse-mosquitto:2` | an MQTT broker — profile `mqtt` |
+
+The trained model is not baked into the gateway image. The container reads it
+from `./artifacts` through a bind mount, which is also where the trainer writes,
+so a retrained model is picked up on the next restart without rebuilding
+anything; until a model exists the gateway waits and says so. The cloud and
+edge databases live in the Docker volumes `vetra_cloud-db` and `vetra_edge-db`,
+so records survive `make docker-down`; `make docker-clean` deletes them.
+
+Settings — the sync API key, the demo herd size, host ports — come from a
+`.env` file next to `docker-compose.yml`; copy `.env.example` to start. The
+bind mounts carry Docker's `z` flag so that SELinux hosts (Fedora, RHEL) let
+the containers read `./artifacts` and `./data`; other hosts ignore it.
+`make docker-up` starts just the cloud service and the gateway, ready for real
+collars to post to `http://<host>:5001/ingest`. `make docker-test` runs both
+test suites inside the containers.
+
+To stream over MQTT instead of REST, start the broker profile and point the
+simulator at it:
+
+```bash
+docker compose --profile mqtt up -d
+docker compose --profile demo --profile mqtt run --rm simulator \
+  python edge/simulator.py --transport mqtt --mqtt-host mosquitto --animals 12 --days 3 --speed 40000
 ```
 
 ### Running the pieces separately
@@ -145,6 +190,28 @@ The gateway also accepts MQTT. Install a broker (`sudo dnf install mosquitto`,
 
 Without a broker the gateway logs that MQTT is unavailable and keeps serving
 REST, so nothing in the demo depends on it.
+
+### Symptom check
+
+The dashboard's **Symptom check** tab diagnoses from drop-downs instead of
+sensor data: pick the species, the weather, when the signs started and what the
+animal shows (temperature, heart rate, breathing, oxygen level, activity, cud
+chewing, walking). It needs the cloud service and the gateway running.
+
+There is no second model. The gateway (`ml/vetra_ml/symptoms.py`) turns each
+selection into the vital-sign change it describes — "high fever" is about +1.8 °C,
+"panting" about +30 breaths/min, the same magnitudes as the disease signatures —
+renders a day of telemetry for five simulated animals of that species, and runs
+it through the unchanged diagnosis engine and clinical rules. The answer shows
+the diagnosis, how many of the five animals agree, the clinical findings, what to
+do next and the readings the model was given. A textbook presentation of each of
+the eight conditions is diagnosed correctly (`tests/test_symptoms.py`).
+
+```bash
+curl -X POST localhost:4000/api/diagnose -H 'Content-Type: application/json' \
+  -d '{"species":"cattle","weather":"hot","onset":"recent",
+       "symptoms":{"breathing":"panting","rumination":"stopped"}}'
+```
 
 ---
 
@@ -195,6 +262,7 @@ server/               Node.js cloud service (records API + live push)
 dashboard/            React dashboard
 tests/                Python test suite
 scripts/              alert evaluation, demo runner
+docker/               Dockerfiles and container helpers (docker-compose.yml is at the root)
 docs/                 architecture and physiology references
 artifacts/            trained models and evaluation reports (generated)
 ```
@@ -214,7 +282,7 @@ artifacts/            trained models and evaluation reports (generated)
 
 Python 3.11 · TensorFlow 2.21 / TFLite · ai-edge-litert · scikit-learn · pandas ·
 NumPy · SQLite · MQTT (paho) · REST · Node.js 20 · Express · better-sqlite3 ·
-React 18 · Vite · Recharts
+React 18 · Vite · Recharts · Docker Compose
 
 ## Known gaps
 

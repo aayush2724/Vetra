@@ -1,0 +1,112 @@
+# Vetra — the whole system in containers.
+#
+#   make docker-demo     # build, start the cloud service and the gateway, stream a herd
+#   make docker-up       # cloud service and gateway only, ready for real collars
+#   make docker-train    # on a fresh clone: generate the data and train the models first
+#   make docker-down     # stop everything; the databases stay in their volumes
+#
+# Profiles keep the optional pieces out of a plain `docker compose up`:
+#   demo   the collar simulator (runs once, then exits)
+#   ml     the trainer (carries TensorFlow; writes ./data and ./artifacts)
+#   mqtt   a Mosquitto broker, for collars that speak MQTT instead of REST
+#
+# Settings come from a .env file next to this one; see .env.example.
+name: vetra
+
+x-edge-image: &edge-image
+  image: vetra/edge
+  build:
+    context: .
+    dockerfile: docker/edge.Dockerfile
+
+services:
+  # Records API + dashboard. Holds no model: every diagnosis is made on the gateway.
+  cloud:
+    image: vetra/cloud
+    build:
+      context: .
+      dockerfile: docker/cloud.Dockerfile
+    ports:
+      - "${CLOUD_PORT:-4000}:4000"
+    environment:
+      VETRA_CLOUD_DB: /data/vetra_cloud.db
+      VETRA_GATEWAY_URL: http://gateway:5001
+      VETRA_API_KEY: ${VETRA_API_KEY:-}
+    volumes:
+      - cloud-db:/data
+    restart: unless-stopped
+
+  # The farm gateway. Deliberately not dependent on the cloud service: it
+  # diagnoses offline and uploads whenever the link happens to be there.
+  gateway:
+    <<: *edge-image
+    command:
+      - ./wait-for-model.sh
+      - python
+      - edge/agent.py
+      - --http-port=5001
+      - --db=/data/vetra_edge.db
+      - --cloud-url=http://cloud:4000
+      - --api-key=${VETRA_API_KEY:-}
+      - --sync-interval=${SYNC_INTERVAL:-5}
+      - --mqtt-host=mosquitto
+    ports:
+      - "${GATEWAY_PORT:-5001}:5001"
+    volumes:
+      # `z` lets SELinux hosts (Fedora, RHEL) share the directory with the
+      # container; it is ignored everywhere else.
+      - ./artifacts:/app/artifacts:ro,z
+      - edge-db:/data
+    depends_on:
+      mosquitto:
+        condition: service_started
+        required: false
+    restart: unless-stopped
+
+  # Stand-in for the collars: streams a generated herd into the gateway once.
+  simulator:
+    <<: *edge-image
+    profiles: [demo]
+    command:
+      - python
+      - edge/simulator.py
+      - --transport=rest
+      - --url=http://gateway:5001/ingest
+      - --animals=${ANIMALS:-12}
+      - --days=${DAYS:-3}
+      - --speed=${SPEED:-40000}
+      - --batch-size=64
+    depends_on:
+      gateway:
+        condition: service_healthy
+      cloud:
+        condition: service_started
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    profiles: [mqtt]
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro,z
+    restart: unless-stopped
+
+  # Dataset + training + TFLite export + evaluation, writing into ./data and
+  # ./artifacts on the host so the gateway picks the model up through its mount.
+  trainer:
+    image: vetra/ml
+    build:
+      context: .
+      dockerfile: docker/ml.Dockerfile
+    profiles: [ml]
+    user: "${VETRA_UID:-1000}:${VETRA_GID:-1000}"
+    environment:
+      TRAIN_ANIMALS: ${TRAIN_ANIMALS:-240}
+      TRAIN_DAYS: ${TRAIN_DAYS:-5}
+    volumes:
+      - ./data:/app/data:z
+      - ./artifacts:/app/artifacts:z
+
+volumes:
+  cloud-db:
+  edge-db:

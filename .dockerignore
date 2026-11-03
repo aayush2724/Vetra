@@ -1,0 +1,22 @@
+# Keep the build context small: dependencies are installed inside the images,
+# and data, models and databases are mounted at run time rather than copied in.
+.git
+.venv
+**/node_modules
+**/dist
+**/__pycache__
+*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+.demo-logs
+*.db
+*.db-*
+data
+artifacts
+report
+docs
+.env
+.env.*
+!.env.example
+.vscode
+.idea
