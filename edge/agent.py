@@ -34,6 +34,7 @@ from store import EdgeStore                               # noqa: E402
 from sync import CloudSync, SyncConfig                    # noqa: E402
 from vetra_ml.inference.engine import DiagnosisEngine     # noqa: E402
 from vetra_ml.schema import ValidationError, parse_payload  # noqa: E402
+from vetra_ml.symptoms import SymptomChecker, catalog     # noqa: E402
 
 log = logging.getLogger("vetra.agent")
 
@@ -53,6 +54,8 @@ class EdgeAgent:
     ) -> None:
         self.store = EdgeStore(db_path)
         self.engine = DiagnosisEngine()
+        # Symptom checks run on their own engine so they never mix with the herd's state.
+        self.symptoms = SymptomChecker()
         self.alerts = AlertEngine(policy or AlertPolicy(), on_event=self._on_alert_event)
         # Restore open alerts so a restart does not re-notify about animals the
         # farmer has already been told about.
@@ -191,10 +194,12 @@ def make_http_handler(agent: EdgeAgent):
                 return self._send(200, {"animals": agent.store.list_animals()})
             if self.path.startswith("/diagnoses"):
                 return self._send(200, {"diagnoses": agent.store.recent_diagnoses(limit=100)})
+            if self.path == "/symptoms":
+                return self._send(200, catalog())
             return self._send(404, {"error": "not found"})
 
         def do_POST(self):  # noqa: N802
-            if self.path not in ("/ingest", "/api/telemetry"):
+            if self.path not in ("/ingest", "/api/telemetry", "/diagnose"):
                 return self._send(404, {"error": "not found"})
 
             length = int(self.headers.get("Content-Length", 0))
@@ -205,6 +210,9 @@ def make_http_handler(agent: EdgeAgent):
                 body = json.loads(self.rfile.read(length))
             except json.JSONDecodeError as exc:
                 return self._send(400, {"error": f"invalid JSON: {exc}"})
+
+            if self.path == "/diagnose":
+                return self._diagnose(body)
 
             # Accept a single reading or a batch; collars buffer while offline
             # and then flush everything at once.
@@ -220,24 +228,59 @@ def make_http_handler(agent: EdgeAgent):
                 "results": results,
             })
 
+        def _diagnose(self, body: Any) -> None:
+            """Diagnose from symptoms picked in the dashboard. Nothing is stored."""
+            if not isinstance(body, dict):
+                return self._send(400, {"error": "body must be a JSON object"})
+            try:
+                result = agent.symptoms.diagnose(
+                    species=body.get("species"),
+                    symptoms=body.get("symptoms") or {},
+                    weather=body.get("weather") or "warm",
+                    onset=body.get("onset") or "recent",
+                )
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, result)
+
     return Handler
 
 
 # --- MQTT ingestion ------------------------------------------------------
 def start_mqtt(agent: EdgeAgent, host: str, port: int, topic: str = MQTT_TOPIC):
-    """Subscribe to the collar topic. Returns None if MQTT is unavailable."""
+    """Subscribe to the collar topic in the background.
+
+    Returns None only when paho-mqtt is not installed. A broker that is not
+    reachable yet is retried with backoff rather than given up on: on a farm,
+    and in a container stack, the broker may well come up after the gateway.
+    """
     try:
         import paho.mqtt.client as mqtt
     except ImportError:
         log.warning("paho-mqtt not installed; MQTT ingestion disabled (REST still active)")
         return None
 
+    warned = False
+
     def on_connect(client, userdata, flags, reason_code, properties=None):
+        nonlocal warned
         if reason_code == 0:
+            warned = False
             client.subscribe(topic, qos=1)
             log.info("MQTT connected to %s:%s, subscribed to %s", host, port, topic)
         else:
             log.error("MQTT connection refused: %s", reason_code)
+
+    def on_connect_fail(client, userdata):
+        # Say it once at warning level, then stay quiet: REST keeps working, and a
+        # broker that is simply absent must not fill the log every minute.
+        nonlocal warned
+        if not warned:
+            log.warning("no MQTT broker at %s:%s yet; REST ingestion still active, "
+                        "retrying in the background", host, port)
+            warned = True
+        else:
+            log.debug("MQTT broker at %s:%s still unreachable", host, port)
 
     def on_message(client, userdata, message):
         try:
@@ -249,17 +292,15 @@ def start_mqtt(agent: EdgeAgent, host: str, port: int, topic: str = MQTT_TOPIC):
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vetra-edge-agent")
     client.on_connect = on_connect
+    client.on_connect_fail = on_connect_fail
     client.on_message = on_message
     # QoS 1 plus a persistent session: readings queue at the broker rather than
     # being lost if the gateway restarts.
     client.reconnect_delay_set(min_delay=1, max_delay=60)
 
-    try:
-        client.connect(host, port, keepalive=60)
-    except OSError as exc:
-        log.warning("no MQTT broker at %s:%s (%s); REST ingestion still active", host, port, exc)
-        return None
-
+    # connect_async + loop_start: the network thread makes the first connection
+    # attempt and every retry, so a missing broker never blocks start-up.
+    client.connect_async(host, port, keepalive=60)
     client.loop_start()
     return client
 
