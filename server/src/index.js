@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { HealthRecordRepository } from './db.js';
 import { EventBus } from './lib/events.js';
 import { apiRouter } from './routes/api.js';
+import { diagnoseRouter } from './routes/diagnose.js';
 import { syncRouter } from './routes/sync.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -23,8 +24,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4000);
 const DB_PATH = process.env.VETRA_CLOUD_DB ?? join(HERE, '..', 'vetra_cloud.db');
 const API_KEY = process.env.VETRA_API_KEY ?? '';
+const GATEWAY_URL = process.env.VETRA_GATEWAY_URL ?? 'http://localhost:5001';
 
-export function createApp({ dbPath = DB_PATH, apiKey = API_KEY } = {}) {
+export function createApp({ dbPath = DB_PATH, apiKey = API_KEY, gatewayUrl = GATEWAY_URL } = {}) {
   const repo = new HealthRecordRepository(dbPath);
   const bus = new EventBus();
   const app = express();
@@ -36,6 +38,7 @@ export function createApp({ dbPath = DB_PATH, apiKey = API_KEY } = {}) {
 
   app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
   app.use('/api/sync', syncRouter(repo, bus, { apiKey }));
+  app.use('/api', diagnoseRouter({ gatewayUrl }));
   app.use('/api', apiRouter(repo, bus));
 
   // Serve the built dashboard when one exists, so a deployment is a single
