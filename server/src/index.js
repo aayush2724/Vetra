@@ -11,7 +11,7 @@ import cors from 'cors';
 import express from 'express';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { HealthRecordRepository } from './db.js';
 import { EventBus } from './lib/events.js';
@@ -58,6 +58,14 @@ export function createApp({ dbPath = DB_PATH, apiKey = API_KEY, gatewayUrl = GAT
     if (err?.type === 'entity.too.large') {
       return res.status(413).json({ error: 'payload too large' });
     }
+    if (err?.type === 'entity.parse.failed') {
+      return res.status(400).json({ error: 'body is not valid JSON' });
+    }
+    // The body parser reports other client mistakes (unsupported charset,
+    // wrong encoding) with their own 4xx; pass those through as such.
+    if (Number.isInteger(err?.status) && err.status >= 400 && err.status < 500) {
+      return res.status(err.status).json({ error: err.message ?? 'bad request' });
+    }
     console.error('unhandled error:', err?.message ?? err);
     res.status(500).json({ error: 'internal error' });
   });
@@ -66,7 +74,10 @@ export function createApp({ dbPath = DB_PATH, apiKey = API_KEY, gatewayUrl = GAT
 }
 
 // Only listen when run directly, so tests can import createApp without a port.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// Compare URL to URL: a raw path with a space or a non-ASCII character never
+// equals the percent-encoded import.meta.url, and the server would exit 0
+// without ever listening.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { app, repo, bus } = createApp();
   const server = app.listen(PORT, () => {
     console.log(`Vetra cloud listening on http://localhost:${PORT}`);

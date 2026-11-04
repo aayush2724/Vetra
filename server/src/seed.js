@@ -14,7 +14,7 @@
  * alerts are reopened rather than duplicated.
  */
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { HealthRecordRepository } from './db.js';
 
@@ -336,8 +336,9 @@ export function seedRepository(repo, { now = new Date(), seed = 7 } = {}) {
   return written;
 }
 
-// Only run when invoked directly, so tests can import seedRepository.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// Only run when invoked directly, so tests can import seedRepository. URL to
+// URL, so a checkout path with a space still counts as "invoked directly".
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const repo = new HealthRecordRepository(DB_PATH);
   try {
     const written = seedRepository(repo);

@@ -38,12 +38,21 @@ export function apiRouter(repo, bus) {
     });
   }));
 
+  // `?status=a&status=b` arrives as an array; binding an array into SQL throws.
+  const single = (value) => (Array.isArray(value) ? value[0] : value);
+
   router.get('/alerts', wrap((req, res) => {
+    const status = single(req.query.status);
+    const severity = single(req.query.severity);
+    if ((status !== undefined && typeof status !== 'string')
+        || (severity !== undefined && typeof severity !== 'string')) {
+      return res.status(400).json({ error: 'status and severity must be plain strings' });
+    }
     res.json({
       alerts: repo.listAlerts({
-        status: req.query.status,
-        severity: req.query.severity,
-        limit: positiveInt(req.query.limit, 100, 500),
+        status,
+        severity,
+        limit: positiveInt(single(req.query.limit), 100, 500),
       }),
     });
   }));

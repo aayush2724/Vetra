@@ -23,7 +23,17 @@ export function diagnoseRouter({ gatewayUrl }) {
           + 'Start it with `make gateway`.',
       });
     }
-    const body = await response.json().catch(() => ({ error: 'invalid response from gateway' }));
+    let body;
+    try {
+      body = await response.json();
+    } catch {
+      // A 200 with an error body would be read by the dashboard as a result
+      // and crash it; whatever answered here was not the gateway's API.
+      return res.status(502).json({
+        error: `The farm gateway at ${base} answered with something that is not a diagnosis. `
+          + 'Check VETRA_GATEWAY_URL.',
+      });
+    }
     return res.status(response.ok ? 200 : response.status).json(body);
   };
 

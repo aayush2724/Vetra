@@ -100,6 +100,30 @@ describe('symptom checks with a gateway', () => {
   });
 });
 
+describe('symptom checks against something that is not the gateway', () => {
+  test('a 200 with a non-JSON body is reported as a bad gateway, never as a result', async () => {
+    // A misconfigured VETRA_GATEWAY_URL that points at a web server, or at the
+    // cloud service itself, answers every path with the HTML app shell.
+    const dir = mkdtempSync(join(tmpdir(), 'vetra-diagnose-'));
+    const impostor = createServer((req, res) => {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<!doctype html><title>not a gateway</title>');
+    });
+    const cloud = await startCloud(await listen(impostor), dir);
+    try {
+      const catalog = await fetch(`${cloud.base}/api/symptoms`);
+      assert.equal(catalog.status, 502);
+      assert.match((await catalog.json()).error, /not a diagnosis/);
+      const check = await post(cloud.base, { species: 'cattle', symptoms: {} });
+      assert.equal(check.status, 502);
+    } finally {
+      stopCloud(cloud);
+      impostor.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('symptom checks without a gateway', () => {
   test('an unreachable gateway is reported as unavailable, not as a crash', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vetra-diagnose-'));
