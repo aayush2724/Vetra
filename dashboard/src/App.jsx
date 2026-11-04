@@ -92,15 +92,23 @@ export default function App() {
     };
   }, [load, markFresh]);
 
+  // Reload after every attempt, successful or not: on a conflict the list is
+  // exactly what is stale, and the error itself is shown by the feed.
   const handleAcknowledge = useCallback(async (id) => {
-    await acknowledgeAlert(id, OPERATOR);
-    await load();
+    try {
+      await acknowledgeAlert(id, OPERATOR);
+    } finally {
+      await load();
+    }
   }, [load]);
 
   const handleResolve = useCallback(async (id) => {
-    await resolveAlert(id);
-    setAlerts((previous) => previous.filter((a) => a.alert_id !== id));
-    await load();
+    try {
+      await resolveAlert(id);
+      setAlerts((previous) => previous.filter((a) => a.alert_id !== id));
+    } finally {
+      await load();
+    }
   }, [load]);
 
   const openAnimal = useCallback((animalId) => {

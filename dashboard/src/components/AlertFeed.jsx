@@ -13,11 +13,17 @@ const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
  */
 export default function AlertFeed({ alerts, freshIds, onAcknowledge, onResolve, onSelectAnimal }) {
   const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null);
 
   const act = async (id, fn) => {
     setBusy(id);
+    setError(null);
     try {
       await fn(id);
+    } catch (err) {
+      // A conflict (someone else got there first) or a dead link used to
+      // vanish into an unhandled rejection; the button just re-enabled.
+      setError(`Could not update ${id}: ${err.message}`);
     } finally {
       setBusy(null);
     }
@@ -26,6 +32,7 @@ export default function AlertFeed({ alerts, freshIds, onAcknowledge, onResolve, 
   if (!alerts.length) {
     return (
       <div className="empty">
+        {error && <div className="banner">{error}</div>}
         <strong>No open alerts</strong>
         Every monitored animal is reading within its normal range.
       </div>
@@ -43,6 +50,7 @@ export default function AlertFeed({ alerts, freshIds, onAcknowledge, onResolve, 
 
   return (
     <div>
+      {error && <div className="banner">{error}</div>}
       {groups.map(([animalId, list]) => {
         const sorted = [...list].sort(
           (a, b) => (SEVERITY_ORDER[b.severity] ?? 0) - (SEVERITY_ORDER[a.severity] ?? 0),

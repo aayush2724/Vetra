@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -36,11 +36,20 @@ export default function AnimalDetail({ animalId, refreshKey }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const shownFor = useRef(null);
 
   useEffect(() => {
     if (!animalId) return undefined;
     let cancelled = false;
 
+    // Switching animal must not leave the previous animal's charts under the
+    // new animal's header while its record loads. A refresh of the same
+    // animal keeps the old data on screen to avoid a flicker.
+    if (shownFor.current !== animalId) {
+      shownFor.current = animalId;
+      setData(null);
+      setError(null);
+    }
     setLoading(true);
     getAnimal(animalId, 720)
       .then((payload) => {
