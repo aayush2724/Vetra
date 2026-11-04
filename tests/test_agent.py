@@ -97,6 +97,84 @@ def test_unknown_paths_and_malformed_bodies_are_client_errors(gateway):
     assert "records" in data["error"]
 
 
+@needs_model
+def test_malformed_records_are_rejected_without_dropping_the_batch(gateway):
+    """Firmware bugs send lists, nulls and strings. Each must come back as a
+    rejection with a reason; the rest of the batch must still be processed."""
+    records = [
+        [1, 2],
+        None,
+        "reading",
+        reading(0, animal_id="CA-0009", latitude="26.85"),
+        reading(1, animal_id="CA-0009", heart_rate=True),
+        reading(2, animal_id=["CA-0009"]),
+        reading(3, animal_id="CA-0009"),
+        reading(4, animal_id="CA-0009"),
+    ]
+    status, data = _call(f"{gateway}/ingest", {"records": records})
+    assert status == 200
+    assert data["accepted"] == 2
+    assert data["rejected"] == 6
+    for result in data["results"][:6]:
+        assert result["accepted"] is False and result["error"]
+    _, status_body = _call(f"{gateway}/status")
+    assert status_body["counters"]["errors"] == 0
+
+
+@needs_model
+def test_bad_headers_and_encodings_are_client_errors(gateway):
+    import http.client
+    from urllib.parse import urlparse
+
+    host = urlparse(gateway)
+    for headers, body in (
+        ({"Content-Length": "abc"}, b""),
+        ({"Content-Length": "2"}, b"\xff\xfe"),
+    ):
+        conn = http.client.HTTPConnection(host.hostname, host.port, timeout=10)
+        conn.putrequest("POST", "/ingest")
+        conn.putheader("Content-Type", "application/json")
+        for key, value in headers.items():
+            conn.putheader(key, value)
+        conn.endheaders()
+        if body:
+            conn.send(body)
+        response = conn.getresponse()
+        assert response.status == 400
+        response.read()
+        conn.close()
+
+
+@needs_model
+def test_symptom_check_rejects_wrong_types(gateway):
+    status, data = _call(f"{gateway}/diagnose", {"species": "cattle", "weather": ["hot"]})
+    assert status == 400 and data["error"]
+    status, data = _call(f"{gateway}/diagnose", {"species": "cattle", "symptoms": "panting"})
+    assert status == 400 and "symptoms" in data["error"]
+
+
+def test_a_failing_handler_cannot_kill_the_mqtt_thread():
+    """paho re-raises callback exceptions and ends its network thread; after
+    that the gateway looks alive over REST while every collar goes unheard."""
+    from agent import start_mqtt
+
+    def explode(payload):
+        raise RuntimeError("boom")
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    client = start_mqtt(SimpleNamespace(handle_payload=explode), "127.0.0.1", port)
+    try:
+        message = SimpleNamespace(payload=b'{"animal_id": "CA-0001"}', topic="vetra/telemetry/CA-0001")
+        client.on_message(client, None, message)   # must not raise
+        assert client._client_id == b"vetra-edge-agent"
+        assert client._clean_session is False
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+
 def test_mqtt_keeps_retrying_when_no_broker_is_listening():
     """Containers and brokers come up in any order; the gateway must not give
     up on MQTT because the broker was a few seconds late."""

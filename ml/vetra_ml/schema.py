@@ -7,7 +7,8 @@ whole system, so the constants below are the single source of truth.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict, field
+import math
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -147,39 +148,56 @@ class ValidationError(ValueError):
     """Raised when an incoming payload cannot be trusted as a reading."""
 
 
+def _is_number(value: Any) -> bool:
+    # bool is an int subclass; `true` as a heart rate is a bug, not a reading.
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def validate(record: TelemetryRecord) -> list[str]:
-    """Return a list of problems with `record`; empty list means it is usable."""
+    """Return a list of problems with `record`; empty list means it is usable.
+
+    Every check here is a type check before it is a range check: a payload
+    built by a buggy collar firmware (strings for numbers, nulls, lists) must
+    come back as a rejection, never as an exception in the ingestion thread.
+    """
     problems: list[str] = []
 
-    if not record.animal_id:
-        problems.append("animal_id is empty")
+    if not isinstance(record.animal_id, str) or not record.animal_id:
+        problems.append("animal_id must be a non-empty string")
     if record.species not in SPECIES:
         problems.append(f"unknown species {record.species!r}")
-    try:
-        datetime.fromisoformat(record.timestamp)
-    except (TypeError, ValueError):
-        problems.append(f"timestamp {record.timestamp!r} is not ISO-8601")
+    if not isinstance(record.timestamp, str):
+        problems.append("timestamp must be an ISO-8601 string")
+    else:
+        try:
+            datetime.fromisoformat(record.timestamp)
+        except ValueError:
+            problems.append(f"timestamp {record.timestamp!r} is not ISO-8601")
 
     for signal, (low, high) in PLAUSIBLE_RANGE.items():
         value = getattr(record, signal, None)
         if value is None:
             problems.append(f"{signal} is missing")
             continue
-        if not isinstance(value, (int, float)):
+        if not _is_number(value):
             problems.append(f"{signal} is not numeric")
         elif not (low <= float(value) <= high):
             problems.append(f"{signal}={value} outside plausible range [{low}, {high}]")
 
-    if not (-90.0 <= record.latitude <= 90.0):
-        problems.append(f"latitude {record.latitude} out of bounds")
-    if not (-180.0 <= record.longitude <= 180.0):
-        problems.append(f"longitude {record.longitude} out of bounds")
+    for coordinate, bound in (("latitude", 90.0), ("longitude", 180.0)):
+        value = getattr(record, coordinate, None)
+        if not _is_number(value):
+            problems.append(f"{coordinate} is not numeric")
+        elif not (-bound <= float(value) <= bound):
+            problems.append(f"{coordinate} {value} out of bounds")
 
     return problems
 
 
-def parse_payload(payload: dict[str, Any]) -> TelemetryRecord:
+def parse_payload(payload: Any) -> TelemetryRecord:
     """Build a validated record from an MQTT/REST payload, or raise."""
+    if not isinstance(payload, dict):
+        raise ValidationError(f"payload must be a JSON object, got {type(payload).__name__}")
     try:
         record = TelemetryRecord.from_dict(payload)
     except TypeError as exc:

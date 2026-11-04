@@ -57,13 +57,14 @@ class EdgeAgent:
         # Symptom checks run on their own engine so they never mix with the herd's state.
         self.symptoms = SymptomChecker()
         self.alerts = AlertEngine(policy or AlertPolicy(), on_event=self._on_alert_event)
-        # Restore open alerts so a restart does not re-notify about animals the
-        # farmer has already been told about.
-        self.alerts.load_open_alerts(self.store.list_alerts(status="open"))
+        # Restore every open alert so a restart does not re-notify about animals
+        # the farmer has already been told about.
+        self.alerts.load_open_alerts(self.store.list_alerts(status="open", limit=None))
 
         self.sync = CloudSync(self.store, sync_config or SyncConfig()) if enable_sync else None
         self._lock = threading.Lock()
-        self.counters = {"received": 0, "rejected": 0, "diagnoses": 0, "alerts": 0, "pruned": 0}
+        self.counters = {"received": 0, "rejected": 0, "errors": 0,
+                         "diagnoses": 0, "alerts": 0, "pruned": 0}
         self.started_at = datetime.now(timezone.utc)
         self.retention_days = retention_days
         self._prune_stop = threading.Event()
@@ -87,6 +88,18 @@ class EdgeAgent:
         with self._lock:
             self.counters["received"] += 1
 
+        try:
+            return self._process(record)
+        except Exception as exc:  # noqa: BLE001 - one bad reading must not kill the thread
+            # The HTTP handler would drop the connection mid-batch and the MQTT
+            # network thread would die for good. Log the traceback, count it,
+            # answer the caller, carry on.
+            with self._lock:
+                self.counters["errors"] += 1
+            log.exception("failed to process a reading for %s", record.animal_id)
+            return {"accepted": False, "error": f"internal error: {type(exc).__name__}"}
+
+    def _process(self, record) -> dict[str, Any]:
         self.store.register_animal(record.animal_id, record.species)
         self.store.record_telemetry(record.animal_id, record.timestamp, record.to_dict())
 
@@ -99,7 +112,9 @@ class EdgeAgent:
         with self._lock:
             self.counters["diagnoses"] += 1
 
-        events = self.alerts.observe(payload_out)
+        # The alert engine keeps per-animal state; serialise it like the engine.
+        with self._lock:
+            events = self.alerts.observe(payload_out)
         return {
             "accepted": True,
             "diagnosis": payload_out,
@@ -107,9 +122,9 @@ class EdgeAgent:
         }
 
     def _on_alert_event(self, event: AlertEvent) -> None:
+        # Called from inside observe(), which already holds the lock.
         self.store.upsert_alert(event.alert)
-        with self._lock:
-            self.counters["alerts"] += 1
+        self.counters["alerts"] += 1
         alert = event.alert
         log.warning(
             "[%s] %s severity=%s notify=%s :: %s",
@@ -124,7 +139,7 @@ class EdgeAgent:
             "uptime_seconds": round(uptime, 1),
             "model_backend": self.engine.backend,
             "tracked_animals": self.engine.tracked_animals,
-            "counters": dict(self.counters),
+            "counters": {**self.counters, "ignored": self.engine.ignored_samples},
             "store": self.store.stats(),
             "sync": self.sync.status() if self.sync else {"enabled": False},
         }
@@ -202,12 +217,17 @@ def make_http_handler(agent: EdgeAgent):
             if self.path not in ("/ingest", "/api/telemetry", "/diagnose"):
                 return self._send(404, {"error": "not found"})
 
-            length = int(self.headers.get("Content-Length", 0))
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                return self._send(400, {"error": "Content-Length must be an integer"})
             if length <= 0 or length > 5_000_000:
                 return self._send(400, {"error": "missing or oversized body"})
 
             try:
-                body = json.loads(self.rfile.read(length))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+            except UnicodeDecodeError:
+                return self._send(400, {"error": "body is not valid UTF-8"})
             except json.JSONDecodeError as exc:
                 return self._send(400, {"error": f"invalid JSON: {exc}"})
 
@@ -232,14 +252,18 @@ def make_http_handler(agent: EdgeAgent):
             """Diagnose from symptoms picked in the dashboard. Nothing is stored."""
             if not isinstance(body, dict):
                 return self._send(400, {"error": "body must be a JSON object"})
+            symptoms = body.get("symptoms") or {}
+            if not isinstance(symptoms, dict):
+                return self._send(400, {"error": "`symptoms` must be an object of question: option"})
             try:
                 result = agent.symptoms.diagnose(
                     species=body.get("species"),
-                    symptoms=body.get("symptoms") or {},
+                    symptoms=symptoms,
                     weather=body.get("weather") or "warm",
                     onset=body.get("onset") or "recent",
                 )
-            except ValueError as exc:
+            except (ValueError, TypeError, AttributeError) as exc:
+                # A list where a string was expected is a client mistake, not a crash.
                 return self._send(400, {"error": str(exc)})
             return self._send(200, result)
 
@@ -288,14 +312,19 @@ def start_mqtt(agent: EdgeAgent, host: str, port: int, topic: str = MQTT_TOPIC):
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             log.warning("dropping unparseable MQTT message on %s: %s", message.topic, exc)
             return
-        agent.handle_payload(payload)
+        try:
+            agent.handle_payload(payload)
+        except Exception:  # noqa: BLE001 - paho re-raises from callbacks and ends the thread
+            log.exception("dropping MQTT message on %s after an unexpected error", message.topic)
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vetra-edge-agent")
+    # QoS 1 plus a persistent session (clean_session=False with a fixed client
+    # id): readings published while the gateway is restarting queue at the
+    # broker and are delivered when it reconnects, rather than being lost.
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vetra-edge-agent",
+                         clean_session=False)
     client.on_connect = on_connect
     client.on_connect_fail = on_connect_fail
     client.on_message = on_message
-    # QoS 1 plus a persistent session: readings queue at the broker rather than
-    # being lost if the gateway restarts.
     client.reconnect_delay_set(min_delay=1, max_delay=60)
 
     # connect_async + loop_start: the network thread makes the first connection
@@ -376,8 +405,10 @@ def main() -> None:
         if mqtt_client:
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
+        # Read the counters before stop() closes the store they partly come from.
+        counters = agent.status()["counters"]
         agent.stop()
-        log.info("final status: %s", json.dumps(agent.status()["counters"]))
+        log.info("final status: %s", json.dumps(counters))
 
 
 if __name__ == "__main__":
