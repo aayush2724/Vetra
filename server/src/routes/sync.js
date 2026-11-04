@@ -6,9 +6,40 @@
  * write is idempotent on its natural key, so a gateway that retries a batch
  * whose response it never saw is harmless.
  */
+import { timingSafeEqual } from 'node:crypto';
 import { Router } from 'express';
 
 const MAX_BATCH = 1000;
+
+// Which fields every record of a table must carry, and as what type. A record
+// that fails this can never be stored, so the batch is refused with a 400 and
+// the gateway drops it from its queue instead of retrying it for ever.
+const REQUIRED = {
+  animals: { animal_id: 'string' },
+  telemetry: { animal_id: 'string', timestamp: 'string' },
+  diagnoses: { animal_id: 'string', timestamp: 'string', condition: 'string' },
+  alerts: { alert_id: 'string', animal_id: 'string', condition: 'string', opened_at: 'string' },
+};
+
+const firstProblem = (name, records) => {
+  for (const [index, record] of records.entries()) {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) {
+      return `record ${index}: must be an object`;
+    }
+    for (const [field, type] of Object.entries(REQUIRED[name])) {
+      if (typeof record[field] !== type || record[field] === '') {
+        return `record ${index}: ${field} must be a non-empty ${type}`;
+      }
+    }
+  }
+  return null;
+};
+
+const sameSecret = (given, expected) => {
+  const a = Buffer.from(String(given));
+  const b = Buffer.from(String(expected));
+  return a.length === b.length && timingSafeEqual(a, b);
+};
 
 export function syncRouter(repo, bus, { apiKey = '' } = {}) {
   const router = Router();
@@ -20,7 +51,9 @@ export function syncRouter(repo, bus, { apiKey = '' } = {}) {
     if (!apiKey) return next();
     const header = req.get('authorization') ?? '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-    if (token !== apiKey) return res.status(401).json({ error: 'invalid or missing API key' });
+    if (!sameSecret(token, apiKey)) {
+      return res.status(401).json({ error: 'invalid or missing API key' });
+    }
     next();
   });
 
@@ -34,8 +67,12 @@ export function syncRouter(repo, bus, { apiKey = '' } = {}) {
     }
     if (records.length === 0) return res.json({ written: 0, received: 0 });
 
+    const problem = firstProblem(name, records);
+    if (problem) return res.status(400).json({ error: problem });
+
     try {
       const written = save(records);
+      repo.noteSync?.();
       onWrite?.(records);
       res.json({ written, received: records.length });
     } catch (err) {

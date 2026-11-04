@@ -186,6 +186,76 @@ describe('alert actions', () => {
   });
 });
 
+describe('gateway re-sends and client mistakes', () => {
+  test('an acknowledged alert keeps its acknowledgement when the gateway escalates it', async () => {
+    const alert = { ...ALERT, alert_id: 'a-3', updated_at: '2026-05-01T11:00:00+00:00' };
+    await post('/api/sync/alerts', { records: [alert] });
+    assert.equal((await post('/api/alerts/a-3/acknowledge', { acknowledged_by: 'vet-1' })).status, 200);
+
+    await post('/api/sync/alerts', {
+      records: [{ ...alert, severity: 'critical', status: 'open', updated_at: '2026-05-01T11:30:00+00:00' }],
+    });
+    const { alerts } = await (await get('/api/alerts?status=active')).json();
+    const a3 = alerts.find((a) => a.alert_id === 'a-3');
+    assert.equal(a3.status, 'acknowledged', 'the vet already saw it');
+    assert.equal(a3.severity, 'critical', 'but the escalation must show');
+    assert.equal(a3.acknowledged_by, 'vet-1');
+  });
+
+  test('a resolved alert stays resolved when the gateway retries an older version', async () => {
+    const alert = { ...ALERT, alert_id: 'a-4' };
+    await post('/api/sync/alerts', { records: [alert] });
+    assert.equal((await post('/api/alerts/a-4/resolve', {})).status, 200);
+
+    await post('/api/sync/alerts', { records: [alert] });
+    const { alerts: resolved } = await (await get('/api/alerts?status=resolved')).json();
+    assert.ok(resolved.some((a) => a.alert_id === 'a-4'));
+    const { alerts: active } = await (await get('/api/alerts?status=active')).json();
+    assert.ok(!active.some((a) => a.alert_id === 'a-4'));
+  });
+
+  test('the gateway resolving an acknowledged alert resolves it', async () => {
+    const alert = { ...ALERT, alert_id: 'a-5' };
+    await post('/api/sync/alerts', { records: [alert] });
+    await post('/api/alerts/a-5/acknowledge', { acknowledged_by: 'vet-1' });
+    await post('/api/sync/alerts', {
+      records: [{ ...alert, status: 'resolved', resolved_at: '2026-05-01T13:00:00+00:00' }],
+    });
+    const { alerts } = await (await get('/api/alerts?status=resolved')).json();
+    const a5 = alerts.find((a) => a.alert_id === 'a-5');
+    assert.equal(a5.resolved_at, '2026-05-01T13:00:00+00:00');
+    assert.equal(a5.acknowledged_by, 'vet-1');
+  });
+
+  test('malformed JSON is a 400, not a 500', async () => {
+    const res = await fetch(`${base}/api/sync/telemetry`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"records": [}',
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('a malformed record rejects the batch with 400 and writes nothing', async () => {
+    const before = (await (await get('/api/summary')).json()).readings;
+    const res = await post('/api/sync/telemetry', {
+      records: [{ ...READING, timestamp: '2026-05-03T00:00:00+00:00' }, null],
+    });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error, /record 1/);
+    assert.equal((await (await get('/api/summary')).json()).readings, before);
+  });
+
+  test('a repeated query parameter does not 500', async () => {
+    assert.equal((await get('/api/alerts?status=open&status=resolved')).status, 200);
+  });
+
+  test('the summary records when a gateway last synced', async () => {
+    const before = Date.now() - 1000;
+    await post('/api/sync/animals', { records: [{ animal_id: 'CA-0002', species: 'goat' }] });
+    const summary = await (await get('/api/summary')).json();
+    assert.ok(new Date(summary.last_sync_at).getTime() >= before);
+  });
+});
+
 describe('live events', () => {
   test('a synced alert is pushed to a connected dashboard', async () => {
     const controller = new AbortController();

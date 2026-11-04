@@ -94,7 +94,12 @@ export class HealthRecordRepository {
     this.db.pragma('foreign_keys = ON');
     this.db.exec(SCHEMA);
     this.#prepare();
+    // When a gateway last delivered a batch. In memory: it is a liveness
+    // signal for the dashboard, not part of the health record.
+    this.lastSyncAt = null;
   }
+
+  noteSync() { this.lastSyncAt = now(); }
 
   #prepare() {
     this.stmt = {
@@ -135,12 +140,22 @@ export class HealthRecordRepository {
           @message, @opened_at, @updated_at, @resolved_at, @acknowledged_by, @acknowledged_at,
           @payload, @received_at)
         ON CONFLICT(alert_id) DO UPDATE SET
+          -- Two writers share this row. The gateway owns the clinical state
+          -- (severity, message, findings) and may resolve; the operator owns
+          -- acknowledgement and may also resolve. A re-send from the gateway
+          -- (escalation, or a retry of a batch whose reply was lost) must not
+          -- undo what a vet did on the dashboard.
           severity        = excluded.severity,
-          status          = excluded.status,
           message         = excluded.message,
-          updated_at      = excluded.updated_at,
-          resolved_at     = excluded.resolved_at,
-          payload         = excluded.payload`),
+          payload         = excluded.payload,
+          status          = CASE
+            WHEN excluded.status = 'resolved' OR alerts.status = 'resolved' THEN 'resolved'
+            WHEN alerts.status = 'acknowledged' THEN 'acknowledged'
+            ELSE excluded.status END,
+          resolved_at     = COALESCE(alerts.resolved_at, excluded.resolved_at),
+          updated_at      = CASE
+            WHEN alerts.status = 'resolved' AND excluded.status != 'resolved' THEN alerts.updated_at
+            ELSE excluded.updated_at END`),
 
       acknowledgeAlert: this.db.prepare(`
         UPDATE alerts SET status = 'acknowledged', acknowledged_by = ?,
@@ -322,8 +337,13 @@ export class HealthRecordRepository {
       WHERE d.timestamp = (SELECT MAX(timestamp) FROM diagnoses WHERE animal_id = d.animal_id)
       GROUP BY d.condition ORDER BY n DESC`).all();
 
-    const lastSync = this.db.prepare(
-      'SELECT MAX(received_at) AS at FROM diagnoses').get()?.at ?? null;
+    // After a restart nothing has synced yet; fall back to the newest record
+    // received so the dashboard still shows when the gateway was last heard.
+    const lastSync = this.lastSyncAt ?? this.db.prepare(`
+      SELECT MAX(at) AS at FROM (
+        SELECT MAX(received_at) AS at FROM diagnoses
+        UNION ALL SELECT MAX(received_at) FROM alerts
+        UNION ALL SELECT MAX(received_at) FROM telemetry)`).get()?.at ?? null;
 
     return { ...counts, by_condition: byCondition, last_sync_at: lastSync };
   }
