@@ -20,9 +20,9 @@ animal — see [Honest limitations](#honest-limitations)).
 
 | | Classical baseline | Edge neural network |
 |---|---|---|
-| Test macro-F1 | 0.986 | 0.981 |
-| Screening recall | 0.985 | 0.977 |
-| False-alarm rate | 0.008 | 0.009 |
+| Test macro-F1 | 0.985 | 0.981 |
+| Screening recall | 0.985 | 0.978 |
+| False-alarm rate | 0.008 | 0.010 |
 | Model size | 7 KB | **12.2 KB** |
 
 Eight classes: healthy, cardiac disorder, respiratory disease, obesity,
@@ -34,10 +34,10 @@ mild, so this matters more than the headline number:
 
 | Severity band | Recall |
 |---|---|
-| Early (0.15–0.35) | 0.884 |
+| Early (0.15–0.35) | 0.873 |
 | Mild (0.35–0.55) | 0.993 |
-| Marked (0.55–0.75) | 0.967 |
-| Severe (0.75–1.00) | 0.984 |
+| Marked (0.55–0.75) | 0.970 |
+| Severe (0.75–1.00) | 0.983 |
 
 ### Edge deployment
 
@@ -46,11 +46,11 @@ by more than 1% is rejected automatically:
 
 | Variant | Size | Agreement with float | Latency | Selected |
 |---|---|---|---|---|
-| float32 | 29.9 KB | 1.0000 | 0.0066 ms | |
-| dynamic int8 | **12.2 KB** | 0.9997 | **0.0064 ms** | ✅ |
-| full int8 | 13.0 KB | 0.4599 | 0.0076 ms | rejected |
+| float32 | 29.9 KB | 1.0000 | 0.013 ms | |
+| dynamic int8 | **12.2 KB** | 0.9995 | **0.010 ms** | ✅ |
+| full int8 | 13.0 KB | 0.1240 | 0.013 ms | rejected |
 
-Full-int8 collapsed to 0.08 macro-F1 and the agreement gate caught it — see
+Full-int8 collapsed to 0.03 macro-F1 and the agreement gate caught it — see
 [docs/architecture.md](docs/architecture.md) for why.
 
 End-to-end throughput of the full streaming engine — validate, window, extract
@@ -66,8 +66,8 @@ The measurement that decides whether anyone keeps using the system
 
 | | Alert on every abnormal window | With the alert policy |
 |---|---|---|
-| Alerts raised | 6,200 | **52** |
-| Per animal-day | 25.83 | **0.22** |
+| Alerts raised | 6,207 | **52** |
+| Per animal-day | 25.86 | **0.22** |
 | Sick animals caught | 35/35 | **35/35** |
 | Healthy animals alerted | — | **0/13** |
 | Median time from onset | — | **1.5 h** |
@@ -88,7 +88,7 @@ presentations, all sourced in
 
 **So the accuracy figures measure the pipeline, not clinical performance.** Real
 animals present with comorbidities, sensor dropout, individual quirks and
-diseases outside these eight classes. That a *logistic regression* scores 0.986
+diseases outside these eight classes. That a *logistic regression* scores 0.985
 is itself the clearest evidence the simulated signatures are cleaner than
 reality — on real data the tree and neural models would be expected to pull
 ahead, and every number would be lower.
@@ -123,7 +123,7 @@ and prints the alerts it raised. `make stop` shuts everything down.
 
 ```bash
 make evaluate  # alert-policy measurement on held-out animals
-make test      # 91 Python tests + 27 Node tests
+make test      # 113 Python tests + 35 Node tests
 make help      # everything else
 ```
 
@@ -242,10 +242,13 @@ Four design decisions do most of the work:
    24-hour baseline catches acute change. Either alone misses half the classes.
 3. **Training and the device share one feature implementation.** Two copies
    would drift, and drift shows up as a model that quietly underperforms in the
-   field. A test pins the two paths to identical output.
+   field. A test runs the streaming engine over a day of readings and pins every
+   window it diagnoses to the batch builder's output, bit for bit.
 4. **Clinical rules run alongside the model.** Textbook thresholds fire
    regardless of what the model predicts, and they are what the alert shows the
-   vet: "SpO₂ 88%, respiratory rate 64/min", not "p=0.94".
+   vet: "SpO₂ 88%, respiratory rate 64/min", not "p=0.94". A critical finding
+   the model has no class for, such as hypothermia, still opens a
+   "critical vital signs" alert on its own.
 
 Full reasoning in [docs/architecture.md](docs/architecture.md).
 
@@ -272,8 +275,8 @@ artifacts/            trained models and evaluation reports (generated)
 | # | Objective | Where | Status |
 |---|---|---|---|
 | 1 | Acquisition and processing pipeline | `schema.py`, `synth/`, `features.py` | ✅ |
-| 2 | Disease prediction models | `train_sklearn.py`, `train_keras.py` | ✅ 0.986 macro-F1 |
-| 3 | Lightweight offline edge models | `export_tflite.py`, `inference/` | ✅ 12.2 KB, 0.006 ms |
+| 2 | Disease prediction models | `train_sklearn.py`, `train_keras.py` | ✅ 0.985 macro-F1 |
+| 3 | Lightweight offline edge models | `export_tflite.py`, `inference/` | ✅ 12.2 KB, 0.010 ms |
 | 4 | Intelligent alert generation | `edge/alerts.py` | ✅ 99.2% noise reduction |
 | 5 | Health records + cloud sync | `edge/store.py`, `edge/sync.py`, `server/` | ✅ |
 | 6 | Dashboard | `dashboard/` | ✅ |
@@ -295,3 +298,9 @@ Things a production deployment would need that this project does not do:
 - Comorbidity handling — an animal can currently hold two open alerts, which is
   right for genuine comorbidity but is also how model flip-flop would present.
 - Model drift monitoring and a retraining path once real data accumulates.
+- The symptom check is forwarded from the cloud service to the gateway, which
+  assumes the cloud can reach the farm network. A real deployment would have the
+  dashboard talk to the gateway on the farm LAN, or give the cloud its own copy
+  of the model.
+- Dashboard actions are open and any origin may call them; a deployment needs
+  sessions and a CORS allow-list, not just the sync key.

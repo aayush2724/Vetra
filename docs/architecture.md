@@ -71,15 +71,22 @@ Species-normalised absolutes catch conditions already present at enrollment
 catches acute change (fever, panting, lameness). Either view alone misses half
 the label space.
 
-The baseline is shifted by one sample so a window can never contribute to the
-baseline it is compared against — that leak would make acute change look normal.
+The baseline is the median of the 24 hours *before* the window and excludes the
+window itself, so a window can never contribute to the baseline it is compared
+against — that leak would make acute change look normal. The device keeps the
+baseline downsampled to one sample every five minutes to fit a small board; the
+batch builder reproduces that exact sampling, and on both sides the deviation
+features stay at zero until six hours of older history exist.
 
 ### One feature implementation, used by both training and the device
 
 `window_features()` is called by the batch builder *and* by the streaming
-engine. Two implementations would drift, and the drift would show up as a model
-that quietly performs worse in the field than on the bench.
-`tests/test_features.py::test_streaming_and_batch_features_agree` pins it.
+engine, and the two build their baselines from the same samples. Two
+implementations would drift, and the drift would show up as a model that
+quietly performs worse in the field than on the bench.
+`tests/test_features.py::test_streaming_and_batch_features_agree` pins it by
+running the streaming engine over an animal's day and comparing every window it
+diagnoses, bit for bit, with the batch builder's row for the same window.
 
 ### Normalisation lives inside the exported model
 
@@ -88,12 +95,12 @@ separate scaler file to keep in sync with it — the usual way edge deployments
 silently break.
 
 The cost of that choice showed up in conversion: full-int8 quantisation
-collapsed to 0.08 macro-F1, because the raw features span from `step_regularity`
+collapsed to 0.03 macro-F1, because the raw features span from `step_regularity`
 (~0.9) to `distance_sum` (thousands), and int8 *input* activations cannot
 represent both. The export script measures every variant against the float model
 and refuses any that disagrees by more than 1%, which rejected full-int8
-automatically. Dynamic-range int8 was selected: **12.2 KB, 0.006 ms/inference,
-0.982 macro-F1**.
+automatically. Dynamic-range int8 was selected: **12.2 KB, 0.010 ms/inference,
+0.981 macro-F1**.
 
 ### Clinical rules run alongside the model, not after it
 
@@ -122,9 +129,14 @@ structure that can drift out of step with the data. Records are marked synced
 only after the server acknowledges them, so a dropped connection costs a retry
 and never a record.
 
-Tables sync in dependency order — animals, telemetry, diagnoses, alerts — and a
-failure stops the pass rather than hammering a link that is down. Diagnoses and
-alerts are small and drain first; bulk telemetry follows.
+Tables sync in dependency order — animals, diagnoses, alerts, then telemetry —
+and a link failure stops the pass rather than hammering a link that is down.
+Diagnoses and alerts are small and are the health record, so they drain first;
+bulk telemetry follows. Each alert is stamped as uploaded only if it is still
+the version that was sent, so an escalation that lands while the previous
+version is in flight goes up on the next pass instead of being lost. A batch the
+cloud rejects as malformed is dropped from the queue and logged, because a row
+that can never be accepted must not block everything behind it.
 
 ## Swapping SQLite for Firestore
 
@@ -205,8 +217,11 @@ minimal but not absent:
   Reads stay open so the dashboard does not need the gateway's key.
 * Table names reaching SQL are allow-listed, and every other value is bound as a
   parameter (`tests/test_store.py::test_unknown_table_is_rejected`).
-* Incoming payloads are validated against plausible physiological ranges before
-  anything is stored or classified.
+* Incoming payloads are validated, field by field and type by type, against
+  plausible physiological ranges before anything is stored or classified; a
+  malformed record is a rejection with a reason, never an exception.
+* Dashboard actions (acknowledge, resolve) are as open as the reads, and CORS
+  allows any origin. On a farm LAN that is tolerable; on the internet it is not.
 
 What a real deployment would add: per-gateway credentials rather than one shared
 key, authenticated dashboard sessions instead of a hardcoded operator name, TLS
