@@ -12,7 +12,6 @@ import json
 import time
 
 import joblib
-import numpy as np
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
@@ -44,10 +43,13 @@ def build_models(seed: int) -> dict[str, object]:
             n_estimators=300, min_samples_leaf=2, class_weight="balanced_subsample",
             random_state=seed, n_jobs=-1,
         ),
+        # No early stopping: sklearn would carve its validation split out of
+        # the training rows at random, ignoring animal groups, so 50%-overlapping
+        # windows from one animal would sit on both sides and the stopping point
+        # would be optimistic. A fixed, modest budget is the honest choice.
         "gradient_boosting": HistGradientBoostingClassifier(
-            max_iter=400, learning_rate=0.08, max_leaf_nodes=31,
-            early_stopping=True, validation_fraction=0.12,
-            random_state=seed,
+            max_iter=200, learning_rate=0.08, max_leaf_nodes=31,
+            early_stopping=False, random_state=seed,
         ),
     }
 

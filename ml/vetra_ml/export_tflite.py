@@ -154,8 +154,17 @@ def main() -> None:
         raise SystemExit("no TFLite variant converted successfully")
 
     # Ship the smallest variant that still tracks the float model closely.
-    # Losing more than 1% agreement is not worth any size saving here.
-    acceptable = [r for r in results if r["agreement_with_keras"] >= 0.99] or results
+    # Losing more than 1% agreement is not worth any size saving here, and if
+    # nothing passes the gate, nothing ships: a silent fallback to "the smallest
+    # one anyway" would deploy exactly the collapsed model the gate exists to
+    # catch.
+    acceptable = [r for r in results if r["agreement_with_keras"] >= 0.99]
+    if not acceptable:
+        raise SystemExit(
+            "no TFLite variant agrees with the Keras model on at least 99% of test "
+            "predictions; refusing to deploy an unverified model. Agreement: "
+            + ", ".join(f"{r['variant']}={r['agreement_with_keras']:.4f}" for r in results)
+        )
     chosen = min(acceptable, key=lambda r: r["size_kb"])
     deploy_path = MODEL_DIR / "vetra_dx_edge.tflite"
     deploy_path.write_bytes((MODEL_DIR / f"vetra_dx_{chosen['variant']}.tflite").read_bytes())
