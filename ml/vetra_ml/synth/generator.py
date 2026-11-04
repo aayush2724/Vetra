@@ -14,7 +14,7 @@ from an animal's *own* rhythm rather than from a population constant.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd

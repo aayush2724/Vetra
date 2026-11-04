@@ -6,7 +6,6 @@ differently on the device than on the bench.
 """
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from vetra_ml.config import MODEL_DIR

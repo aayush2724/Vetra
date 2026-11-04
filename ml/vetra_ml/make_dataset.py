@@ -8,7 +8,6 @@ import argparse
 import json
 import time
 
-import numpy as np
 import pandas as pd
 
 from .config import PROCESSED_DIR, RANDOM_SEED, RAW_DIR, ensure_dirs
