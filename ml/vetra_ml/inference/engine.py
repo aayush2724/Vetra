@@ -9,11 +9,17 @@ run inside the MQTT agent, inside a REST handler or inside a unit test.
 Memory is the binding constraint on a Raspberry-Pi-class board, so the baseline
 history is stored downsampled — one sample every five minutes over 24 hours is
 288 values per channel instead of 1440, and a median over a full day does not
-need minute resolution to be accurate.
+need minute resolution to be accurate. The batch feature builder in
+`features.py` reproduces exactly this history, so training and the device see
+the same baseline for the same window; `tests/test_features.py` pins the two.
+
+The engine is shared by every ingestion thread (HTTP handlers, the MQTT
+network thread), so all state changes and model calls happen under one lock.
 """
 from __future__ import annotations
 
 import json
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,16 +28,14 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
-from ..config import MODEL_DIR, SAMPLES_PER_WINDOW, WINDOW_STRIDE_MINUTES
+from ..config import (  # noqa: F401 - the baseline constants are re-exported for callers
+    BASELINE_CAPACITY, BASELINE_DOWNSAMPLE, MIN_BASELINE_SAMPLES, MODEL_DIR,
+    SAMPLES_PER_WINDOW, WINDOW_BASELINE_SAMPLES, WINDOW_STRIDE_MINUTES,
+)
 from ..features import CORE_CHANNELS, feature_names, window_features
 from ..schema import CONDITIONS, TelemetryRecord
 from .rules import RuleFlag, evaluate_rules, worst_severity
 from .runtime import InterpreterUnavailable, load_interpreter
-
-BASELINE_DOWNSAMPLE = 5           # keep one baseline sample every 5 minutes
-BASELINE_CAPACITY = 24 * 60 // BASELINE_DOWNSAMPLE
-# Baseline deviation features are meaningless until enough history exists.
-MIN_BASELINE_SAMPLES = 60 // BASELINE_DOWNSAMPLE * 6   # ~6 hours
 
 
 @dataclass(slots=True)
@@ -46,6 +50,9 @@ class Diagnosis:
     rule_severity: str = "info"
     baseline_ready: bool = False
     model_backend: str = ""
+    # The feature vector the model saw. Kept for parity tests and debugging;
+    # deliberately not serialised.
+    features: Any = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +78,7 @@ class _AnimalState:
     )
     samples_seen: int = 0
     samples_since_diagnosis: int = 0
+    last_timestamp: pd.Timestamp | None = None
 
 
 class DiagnosisEngine:
@@ -86,6 +94,10 @@ class DiagnosisEngine:
         self._states: dict[str, _AnimalState] = {}
         self._feature_names = feature_names()
         self._classes = list(CONDITIONS)
+        self._lock = threading.Lock()
+        # Readings dropped because their timestamp was not newer than the
+        # animal's last one: a retransmitted buffer or an out-of-order batch.
+        self.ignored_samples = 0
 
         self._interpreter = None
         self._sklearn = None
@@ -124,6 +136,12 @@ class DiagnosisEngine:
             import joblib
 
             bundle = joblib.load(sklearn_path)
+            saved = list(bundle.get("feature_names") or [])
+            if saved and saved != self._feature_names:
+                raise ValueError(
+                    "feature order in the sklearn bundle does not match features.py; "
+                    "retrain before deploying"
+                )
             self._sklearn = bundle["model"]
             self._classes = bundle.get("classes", self._classes)
             self.backend = f"sklearn:{bundle.get('model_name', 'model')}"
@@ -153,11 +171,25 @@ class DiagnosisEngine:
         """Add one sample. Returns a diagnosis when a full window is due."""
         if isinstance(record, dict):
             record = TelemetryRecord.from_dict(record)
+        with self._lock:
+            return self._ingest(record)
 
+    def _ingest(self, record: TelemetryRecord) -> Diagnosis | None:
         state = self._states.get(record.animal_id)
         if state is None:
             state = _AnimalState(species=record.species)
             self._states[record.animal_id] = state
+
+        stamp = pd.Timestamp(record.timestamp)
+        if stamp.tzinfo is None:
+            stamp = stamp.tz_localize("UTC")
+        if state.last_timestamp is not None and stamp <= state.last_timestamp:
+            # A collar flushing its buffer twice, or a batch arriving out of
+            # order. The store already keeps one row per minute; the window
+            # must not count the same minute twice either.
+            self.ignored_samples += 1
+            return None
+        state.last_timestamp = stamp
 
         row = record.to_dict()
         state.window.append(row)
@@ -179,10 +211,14 @@ class DiagnosisEngine:
     def _diagnose(self, animal_id: str, state: _AnimalState) -> Diagnosis:
         window = pd.DataFrame(list(state.window))
 
-        history = state.baseline[CORE_CHANNELS[0]]
-        baseline_ready = len(history) >= MIN_BASELINE_SAMPLES
+        # The newest entries of the baseline history fall inside the window
+        # being diagnosed. They are left out: a window must never contribute
+        # to the baseline it is compared against. `trailing_baseline` in
+        # features.py makes the identical cut for training.
+        usable = len(state.baseline[CORE_CHANNELS[0]]) - WINDOW_BASELINE_SAMPLES
+        baseline_ready = usable >= MIN_BASELINE_SAMPLES
         baseline = (
-            {c: float(np.median(state.baseline[c])) for c in CORE_CHANNELS}
+            {c: float(np.median(list(state.baseline[c])[:usable])) for c in CORE_CHANNELS}
             if baseline_ready
             else None
         )
@@ -219,6 +255,7 @@ class DiagnosisEngine:
             rule_severity=worst_severity(flags),
             baseline_ready=baseline_ready,
             model_backend=self.backend,
+            features=features,
         )
 
     def ingest_many(self, records: Iterable[TelemetryRecord | dict]) -> list[Diagnosis]:

@@ -18,7 +18,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .config import SAMPLES_PER_WINDOW, WINDOW_STRIDE_MINUTES
+from .config import (
+    BASELINE_DOWNSAMPLE, BASELINE_MINUTES, MIN_BASELINE_SAMPLES, SAMPLES_PER_WINDOW,
+    WINDOW_STRIDE_MINUTES,
+)
 from .schema import SPECIES
 from .synth.generator import temperature_humidity_index
 from .synth.species import profile_for
@@ -36,9 +39,6 @@ CORE_CHANNELS: tuple[str, ...] = (
 
 # Per-channel summary statistics, in a fixed order.
 STATS: tuple[str, ...] = ("mean", "std", "min", "max", "slope", "zspecies", "devbase")
-
-# How much history feeds the animal's own baseline, in samples.
-BASELINE_MINUTES = 24 * 60
 
 
 def _species_reference(species: str) -> dict[str, tuple[float, float]]:
@@ -190,18 +190,34 @@ def window_features(
     return np.asarray(values, dtype=np.float32)
 
 
-def _trailing_baselines(animal: pd.DataFrame) -> pd.DataFrame:
-    """Rolling median of each channel over prior history only.
+def downsampled_history(animal: pd.DataFrame) -> np.ndarray:
+    """The baseline samples the device keeps: every fifth minute.
 
-    Shifted by one sample so a window can never contribute to the baseline it
-    is compared against — that leak would make acute change look normal.
+    Row k holds the sample at position 5k + 4 of the animal's sorted history,
+    which is exactly the sample the streaming engine appends to its baseline
+    when its sample count reaches a multiple of five.
     """
-    return (
-        animal[list(CORE_CHANNELS)]
-        .shift(1)
-        .rolling(BASELINE_MINUTES, min_periods=SAMPLES_PER_WINDOW)
-        .median()
-    )
+    values = animal[list(CORE_CHANNELS)].to_numpy(dtype=np.float64)
+    return values[BASELINE_DOWNSAMPLE - 1::BASELINE_DOWNSAMPLE]
+
+
+def trailing_baseline(history: np.ndarray, start: int, end: int) -> dict[str, float] | None:
+    """Median of the downsampled samples older than the window [start, end).
+
+    Only samples from the last BASELINE_MINUTES before `end` count, because the
+    device keeps no more, and none from the window itself: a window must never
+    contribute to the baseline it is compared against, or acute change would
+    look normal. Returns None until six hours of older history exist, which is
+    the same gate the device applies.
+    """
+    oldest = end - BASELINE_MINUTES
+    first = max(0, -(-(oldest - (BASELINE_DOWNSAMPLE - 1)) // BASELINE_DOWNSAMPLE))
+    last = max(0, (start - BASELINE_DOWNSAMPLE) // BASELINE_DOWNSAMPLE + 1)
+    kept = history[first:last]
+    if len(kept) < MIN_BASELINE_SAMPLES:
+        return None
+    medians = np.median(kept, axis=0)
+    return {channel: float(medians[i]) for i, channel in enumerate(CORE_CHANNELS)}
 
 
 def build_windows(
@@ -225,15 +241,13 @@ def build_windows(
     for animal_id, animal in df.groupby("animal_id", sort=True):
         animal = animal.sort_values("timestamp").reset_index(drop=True)
         species = animal["species"].iloc[0]
-        baselines = _trailing_baselines(animal)
+        history = downsampled_history(animal)
 
         n = len(animal)
         for end in range(SAMPLES_PER_WINDOW, n + 1, stride_minutes):
             start = end - SAMPLES_PER_WINDOW
             window = animal.iloc[start:end]
-
-            base_row = baselines.iloc[end - 1]
-            baseline = None if base_row.isna().any() else base_row.to_dict()
+            baseline = trailing_baseline(history, start, end)
 
             feature_rows.append(window_features(window, baseline, species))
 

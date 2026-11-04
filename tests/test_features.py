@@ -7,12 +7,12 @@ up as a model that quietly performs worse in the field than on the bench.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 
-from vetra_ml.config import SAMPLES_PER_WINDOW
+from vetra_ml.config import BASELINE_DOWNSAMPLE, SAMPLES_PER_WINDOW
 from vetra_ml.features import (
-    CORE_CHANNELS, N_FEATURES, _slope, build_windows, feature_names, window_features,
+    CORE_CHANNELS, N_FEATURES, _slope, build_windows, feature_names, trailing_baseline,
+    window_features,
 )
 
 
@@ -83,29 +83,48 @@ def test_build_windows_baseline_never_leaks_future_samples(herd):
     assert not first.has_baseline.any()
 
 
-def test_streaming_and_batch_features_agree(herd):
+def test_window_is_excluded_from_its_own_baseline():
+    """A window must never contribute to the baseline it is compared against,
+    otherwise an hour of fever drags the baseline up and looks less abnormal."""
+    minutes = 24 * 60
+    history = np.full((minutes // BASELINE_DOWNSAMPLE, len(CORE_CHANNELS)), 70.0)
+    start, end = minutes - SAMPLES_PER_WINDOW, minutes
+    # Corrupt exactly the window's own downsampled samples.
+    window_rows = [k for k in range(len(history)) if start <= 5 * k + 4 < end]
+    assert len(window_rows) == SAMPLES_PER_WINDOW // BASELINE_DOWNSAMPLE
+    history[window_rows] = 500.0
+
+    baseline = trailing_baseline(history, start, end)
+    assert baseline is not None
+    assert all(v == 70.0 for v in baseline.values())
+
+
+def test_baseline_needs_six_hours_of_older_history():
+    history = np.full((400, len(CORE_CHANNELS)), 70.0)
+    # 6 h of history plus the window itself is the first point it becomes usable.
+    assert trailing_baseline(history, 300, 360) is None
+    assert trailing_baseline(history, 360, 420) is not None
+
+
+def test_streaming_and_batch_features_agree(herd, stub_engine):
     """The device and the trainer must compute the same vector, exactly.
 
     This is the test that protects against training/serving skew: if the two
-    code paths ever diverge, every field prediction degrades invisibly.
+    code paths ever diverge, every field prediction degrades invisibly. It runs
+    the real streaming engine over an animal's day and compares every window
+    it diagnoses with the batch builder's row for the same window.
     """
-    from vetra_ml.inference.engine import BASELINE_DOWNSAMPLE, MIN_BASELINE_SAMPLES
-
     animal_id = herd.animal_id.iloc[0]
     animal = herd[herd.animal_id == animal_id].sort_values("timestamp").reset_index(drop=True)
-    species = animal.species.iloc[0]
 
-    # Reproduce the engine's downsampled baseline over the same history, then
-    # compute both ways for the identical window.
-    end = 700
-    window = animal.iloc[end - SAMPLES_PER_WINDOW:end]
-    history = animal.iloc[:end]
+    X, _, meta = build_windows(animal)
 
-    kept = history.iloc[BASELINE_DOWNSAMPLE - 1::BASELINE_DOWNSAMPLE]
-    assert len(kept) >= MIN_BASELINE_SAMPLES
-    baseline = {c: float(np.median(kept[c])) for c in CORE_CHANNELS}
+    rows = animal.assign(timestamp=animal.timestamp.astype(str)).to_dict("records")
+    streamed = stub_engine.ingest_many(rows)
 
-    direct = window_features(window, baseline, species)
-    via_frame = window_features(pd.DataFrame(window.to_dict("records")), baseline, species)
-
-    np.testing.assert_array_equal(direct, via_frame)
+    assert len(streamed) == len(X) > 0
+    for i, diagnosis in enumerate(streamed):
+        assert str(meta.window_end.iloc[i]) == diagnosis.timestamp
+        assert bool(meta.has_baseline.iloc[i]) == diagnosis.baseline_ready
+        np.testing.assert_array_equal(diagnosis.features, X[i])
+    assert meta.has_baseline.any(), "the comparison must cover windows with a baseline"

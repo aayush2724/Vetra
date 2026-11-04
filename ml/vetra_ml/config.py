@@ -27,6 +27,19 @@ WINDOW_STRIDE_MINUTES = 30   # emit a decision every 30 min (50% overlap)
 
 SAMPLES_PER_WINDOW = WINDOW_MINUTES // SAMPLE_INTERVAL_MIN
 
+# --- Baseline history ----------------------------------------------------
+# The animal's own trailing baseline is a median over the previous 24 hours,
+# kept downsampled (one sample every five minutes) so a Raspberry-Pi-class
+# board holds 288 values per channel instead of 1440. The current window is
+# excluded from its own baseline, and the deviation features stay at zero until
+# six hours of older history exist. Training and the device share these numbers
+# so that both compute the same baseline from the same samples.
+BASELINE_MINUTES = 24 * 60
+BASELINE_DOWNSAMPLE = 5
+BASELINE_CAPACITY = BASELINE_MINUTES // BASELINE_DOWNSAMPLE           # 288 samples
+MIN_BASELINE_SAMPLES = 6 * 60 // BASELINE_DOWNSAMPLE                  # 72 samples, 6 h
+WINDOW_BASELINE_SAMPLES = SAMPLES_PER_WINDOW // BASELINE_DOWNSAMPLE   # 12 samples per window
+
 RANDOM_SEED = 42
 
 

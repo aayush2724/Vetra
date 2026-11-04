@@ -22,6 +22,24 @@ def store(tmp_path):
     s.close()
 
 
+@pytest.fixture
+def stub_engine(monkeypatch):
+    """A DiagnosisEngine that needs no model file: features and state are real,
+    the prediction is a flat distribution. Lets the pipeline be tested without
+    a training run."""
+    import numpy as np
+
+    from vetra_ml.inference.engine import DiagnosisEngine
+    from vetra_ml.schema import CONDITIONS
+
+    monkeypatch.setattr(DiagnosisEngine, "_load_model", lambda self, *args: None)
+    monkeypatch.setattr(
+        DiagnosisEngine, "_predict_proba",
+        lambda self, features: np.full(len(CONDITIONS), 1.0 / len(CONDITIONS)),
+    )
+    return DiagnosisEngine()
+
+
 @pytest.fixture(scope="session")
 def herd():
     """A small deterministic herd, generated once and shared across tests."""
