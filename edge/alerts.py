@@ -8,7 +8,9 @@ off by the farmer within a week. Everything here exists to stop that:
   before it opens an alert, so a single odd hour stays silent.
 * **A fast path for emergencies.** Confirmation costs time, and an animal whose
   oxygen saturation is collapsing does not have an hour to spare. A critical
-  clinical rule opens the alert immediately, bypassing confirmation entirely.
+  clinical rule opens the alert immediately, bypassing confirmation entirely,
+  and it does so whatever the model predicted: when the model sees nothing it
+  was trained on, the alert opens as "critical vital signs" instead of not at all.
 * **Hysteresis.** Alerts close only after a sustained run of healthy windows,
   so a borderline animal does not flap between states.
 * **Cooldown.** A freshly resolved condition cannot immediately reopen.
@@ -66,6 +68,37 @@ RELEVANT_FLAGS: dict[str, frozenset[str]] = {
     "mobility_disorder": frozenset({"IRREGULAR_GAIT", "RECUMBENCY"}),
 }
 
+# A critical clinical rule with no confident diagnosis to attach it to opens
+# an alert under this condition. The rules are the authority on an emergency;
+# the model's verdict must never be able to silence them.
+CRITICAL_VITALS = "critical_vitals"
+CRITICAL_VITALS_LABEL = "Critical vital signs"
+
+# Findings about the weather, not the animal. On a hot afternoon they are true
+# of the whole herd at once, so on their own they must never open a per-animal
+# alert: that is one message per animal on every hot day, and the farmer mutes
+# the system. They still raise the severity of a diagnosis the model is
+# confident about, which is how a heat-stress alert becomes critical.
+ENVIRONMENTAL_FLAGS = frozenset({"HEAT_ADVISORY", "HEAT_LOAD", "SEVERE_HEAT_LOAD"})
+
+
+def has_critical_vitals(diagnosis: dict[str, Any]) -> bool:
+    """A critical finding measured on the animal itself."""
+    return any(
+        flag.get("severity") == "critical" and flag.get("code") not in ENVIRONMENTAL_FLAGS
+        for flag in diagnosis.get("rule_flags") or []
+    )
+
+
+def condition_label(condition: str) -> str:
+    if condition == CRITICAL_VITALS:
+        return CRITICAL_VITALS_LABEL
+    return CONDITION_LABELS.get(condition, condition)
+
+
+def _flag_rank(flag: dict) -> int:
+    return SEVERITY_RANK.get(RULE_SEVERITY_TO_ALERT.get(flag.get("severity", "info"), "low"), 1)
+
 
 @dataclass(slots=True)
 class AlertPolicy:
@@ -114,16 +147,21 @@ def combine_severity(condition: str, rule_severity: str) -> str:
 
 def build_message(diagnosis: dict[str, Any], severity: str) -> str:
     """One line a farmer can read on a phone without opening the app."""
-    label = CONDITION_LABELS.get(diagnosis["condition"], diagnosis["condition"])
+    label = condition_label(diagnosis["condition"])
     animal = diagnosis["animal_id"]
     confidence = float(diagnosis.get("confidence", 0.0))
 
     flags = diagnosis.get("rule_flags") or []
 
+    if diagnosis["condition"] == CRITICAL_VITALS:
+        # No diagnosis to explain, so the worst measured finding is the message.
+        worst = max(flags, key=_flag_rank) if flags else None
+        detail = f" {worst['message']}" if worst else ""
+        return f"{animal}: critical vital signs.{detail}"
+
     def rank(flag: dict) -> tuple[int, int]:
         relevant = flag.get("code") in RELEVANT_FLAGS.get(diagnosis["condition"], frozenset())
-        severity = SEVERITY_RANK.get(RULE_SEVERITY_TO_ALERT.get(flag.get("severity", "info"), "low"), 1)
-        return (int(relevant), severity)
+        return (int(relevant), _flag_rank(flag))
 
     # A finding that explains the diagnosis beats a more severe but unrelated
     # one; an unrelated critical finding still gets its own flag in the payload.
@@ -166,21 +204,49 @@ class AlertEngine:
 
         events: list[AlertEvent] = []
 
-        if condition == "healthy" or confidence < self.policy.min_confidence:
+        critical = rule_severity == "critical"
+        confident = condition != "healthy" and confidence >= self.policy.min_confidence
+        # Without a confident diagnosis only the animal's own vitals count as an
+        # emergency; a severe heat index is the weather and alerts the herd,
+        # not this animal.
+        vitals_critical = has_critical_vitals(diagnosis)
+
+        if not confident and not vitals_critical:
             state.healthy_streak += 1
             events.extend(self._maybe_resolve(animal_id, observed_at))
             return self._emit(events)
 
+        # A window carrying a critical vital sign is never a "normal reading",
+        # whatever the model made of it, so it can neither resolve an alert
+        # nor count towards the healthy run that would.
         state.healthy_streak = 0
 
+        if not confident:
+            # The model offers no confident diagnosis, but the vitals are
+            # critical. The rules decide. Attach the finding to an alert this
+            # animal already has (the model's own guess first), and only when
+            # there is none open it under a dedicated condition, so the
+            # model's verdict can never drop the finding.
+            open_here = self._open[animal_id]
+            if condition != "healthy" and condition in open_here:
+                attributed = condition
+            else:
+                diseases = [c for c in open_here if c != CRITICAL_VITALS]
+                attributed = diseases[0] if diseases else CRITICAL_VITALS
+            condition = attributed
+            diagnosis = {**diagnosis, "condition": attributed}
+
         # An animal in genuine distress is not made to wait for confirmation.
-        emergency = rule_severity == "critical"
+        emergency = critical
 
         window = list(state.recent)[-self.policy.history:]
-        agreeing = sum(
-            1 for c, conf, _ in window
-            if c == condition and conf >= self.policy.min_confidence
-        )
+        if condition == CRITICAL_VITALS:
+            agreeing = sum(1 for _, _, sev in window if sev == "critical")
+        else:
+            agreeing = sum(
+                1 for c, conf, _ in window
+                if c == condition and conf >= self.policy.min_confidence
+            )
         if not emergency and agreeing < self.policy.confirm_count:
             return self._emit(events)
 
@@ -193,6 +259,9 @@ class AlertEngine:
 
         if existing is None:
             events.append(AlertEvent("opened", self._new_alert(diagnosis, severity, observed_at, agreeing)))
+            if condition != CRITICAL_VITALS:
+                # A diagnosis now explains the vitals; one concern, not two.
+                events.extend(self._supersede_critical_vitals(animal_id, condition, observed_at))
         else:
             # Read the prior severity first: _update_alert writes the new value
             # into this same dict, so comparing afterwards always sees equality
@@ -211,7 +280,7 @@ class AlertEngine:
             "animal_id": diagnosis["animal_id"],
             "species": diagnosis.get("species", ""),
             "condition": diagnosis["condition"],
-            "condition_label": CONDITION_LABELS.get(diagnosis["condition"], diagnosis["condition"]),
+            "condition_label": condition_label(diagnosis["condition"]),
             "severity": severity,
             "status": "open",
             "opened_at": observed_at.isoformat(timespec="seconds"),
@@ -259,6 +328,20 @@ class AlertEngine:
             del self._open[animal_id][condition]
             events.append(AlertEvent("resolved", alert))
         return events
+
+    def _supersede_critical_vitals(self, animal_id: str, condition: str,
+                                   observed_at: datetime) -> list[AlertEvent]:
+        alert = self._open[animal_id].pop(CRITICAL_VITALS, None)
+        if alert is None:
+            return []
+        alert["status"] = "resolved"
+        alert["resolved_at"] = observed_at.isoformat(timespec="seconds")
+        alert["updated_at"] = alert["resolved_at"]
+        alert["message"] = (
+            f"{animal_id}: critical vital signs now attributed to "
+            f"{condition_label(condition).lower()}; see that alert."
+        )
+        return [AlertEvent("resolved", alert)]
 
     def _emit(self, events: list[AlertEvent]) -> list[AlertEvent]:
         if self.on_event:

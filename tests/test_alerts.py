@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from alerts import AlertEngine, AlertPolicy, build_message, combine_severity
+from alerts import CRITICAL_VITALS, AlertEngine, AlertPolicy, build_message, combine_severity
 
 START = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)
 
@@ -47,6 +45,78 @@ def test_a_critical_vital_sign_bypasses_confirmation():
     ))
     assert [e.action for e in events] == ["opened"]
     assert events[0].alert["severity"] == "critical"
+
+
+HYPOTHERMIA = {"code": "HYPOTHERMIA", "severity": "critical",
+               "message": "Body temperature 36.5C below normal range"}
+HYPOXAEMIA = {"code": "SEVERE_HYPOXAEMIA", "severity": "critical",
+              "message": "Oxygen saturation fell to 84% — urgent"}
+
+
+def test_a_critical_vital_sign_alerts_even_when_the_model_says_healthy():
+    """The rules are the authority on an emergency. Hypothermia is not one of
+    the model's classes, so the model confidently says healthy; the alert must
+    still open, immediately, carrying the finding."""
+    engine = AlertEngine(AlertPolicy(confirm_count=2))
+    events = engine.observe(diagnosis("healthy", confidence=1.0,
+                                      rule_severity="critical", flags=[HYPOTHERMIA]))
+    assert [e.action for e in events] == ["opened"]
+    alert = events[0].alert
+    assert alert["condition"] == CRITICAL_VITALS
+    assert alert["severity"] == "critical"
+    assert "veterinarian" in alert["notify"]
+    assert "36.5C" in alert["message"]
+
+
+def test_the_weather_alone_never_opens_an_alert_on_a_healthy_animal():
+    """Severe heat load is critical by severity but is true of the whole herd at
+    once; on a healthy animal it must stay silent, or every hot afternoon raises
+    one alert per animal and the farmer mutes the system."""
+    heat = {"code": "SEVERE_HEAT_LOAD", "severity": "critical",
+            "message": "Temperature-humidity index 89 — severe heat load, act now"}
+    engine = AlertEngine(AlertPolicy(confirm_count=2))
+    for minute in (0, 30, 60):
+        assert engine.observe(diagnosis("healthy", confidence=1.0, minute=minute,
+                                        rule_severity="critical", flags=[heat])) == []
+    assert engine.open_alerts() == []
+
+    # On a confident heat-stress diagnosis the same flag still makes it critical.
+    events = engine.observe(diagnosis("heat_stress", minute=90, rule_severity="critical", flags=[heat]))
+    assert [e.action for e in events] == ["opened"]
+    assert events[0].alert["severity"] == "critical"
+
+
+def test_critical_windows_never_count_as_normal_readings():
+    """Three low-confidence windows that each carry a critical finding once
+    resolved an open alert as 'no longer detected'."""
+    engine = AlertEngine(AlertPolicy(confirm_count=2, clear_count=3))
+    for minute in (0, 30):
+        engine.observe(diagnosis("respiratory_disease", minute=minute))
+    for minute in (60, 90, 120):
+        events = engine.observe(diagnosis("respiratory_disease", confidence=0.55, minute=minute,
+                                          rule_severity="critical", flags=[HYPOXAEMIA]))
+        assert all(e.action != "resolved" for e in events)
+    assert [a["condition"] for a in engine.open_alerts()] == ["respiratory_disease"]
+
+
+def test_a_later_diagnosis_supersedes_the_critical_vitals_alert():
+    engine = AlertEngine(AlertPolicy(confirm_count=1))
+    engine.observe(diagnosis("healthy", confidence=1.0, minute=0,
+                             rule_severity="critical", flags=[HYPOXAEMIA]))
+    events = engine.observe(diagnosis("respiratory_disease", minute=30,
+                                      rule_severity="critical", flags=[HYPOXAEMIA]))
+    assert [e.action for e in events] == ["opened", "resolved"]
+    assert events[1].alert["condition"] == CRITICAL_VITALS
+    assert [a["condition"] for a in engine.open_alerts()] == ["respiratory_disease"]
+
+
+def test_a_critical_vitals_alert_resolves_after_a_healthy_run():
+    engine = AlertEngine(AlertPolicy(clear_count=2))
+    engine.observe(diagnosis("healthy", minute=0, rule_severity="critical", flags=[HYPOTHERMIA]))
+    assert engine.observe(diagnosis("healthy", minute=30)) == []
+    events = engine.observe(diagnosis("healthy", minute=60))
+    assert [e.action for e in events] == ["resolved"]
+    assert engine.open_alerts() == []
 
 
 def test_a_steady_alert_does_not_re_notify():
