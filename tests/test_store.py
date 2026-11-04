@@ -62,6 +62,27 @@ def test_marking_synced_is_scoped_to_the_given_keys(store):
     assert store.pending_counts()["telemetry"] == 2
 
 
+def test_an_alert_edited_during_upload_is_not_marked_synced(store):
+    """The version sent must be the version stamped; anything newer stays pending."""
+    store.upsert_alert({**ALERT, "updated_at": "2026-05-01T10:00:00+00:00"})
+    rows = store.unsynced("alerts")
+    # Escalation lands while the batch is in flight.
+    store.upsert_alert({**ALERT, "severity": "critical", "updated_at": "2026-05-01T10:30:00+00:00"})
+    store.mark_synced("alerts", [rows[0]["row_key"]], [rows[0]["updated_at"]])
+    assert store.pending_counts()["alerts"] == 1
+
+    rows = store.unsynced("alerts")
+    store.mark_synced("alerts", [rows[0]["row_key"]], [rows[0]["updated_at"]])
+    assert store.pending_counts()["alerts"] == 0
+
+
+def test_listing_alerts_without_a_limit_returns_them_all(store):
+    for i in range(150):
+        store.upsert_alert({**ALERT, "alert_id": f"alert-{i}", "animal_id": f"CA-{i:04d}"})
+    assert len(store.list_alerts(status="open")) == 100
+    assert len(store.list_alerts(status="open", limit=None)) == 150
+
+
 def test_unknown_table_is_rejected(store):
     # The table name is interpolated into SQL, so the allow-list is load-bearing.
     with pytest.raises(ValueError):

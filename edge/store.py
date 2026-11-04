@@ -222,15 +222,21 @@ class EdgeStore:
             row = cur.fetchone()
         return json.loads(row["payload"]) if row else None
 
-    def list_alerts(self, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_alerts(self, status: str | None = None, limit: int | None = 100) -> list[dict[str, Any]]:
+        """Alerts newest first. `limit=None` returns every match, which is what
+        a restart needs: an open alert left out here would be re-raised under a
+        new id and notify the farmer twice."""
         query = "SELECT payload FROM alerts"
         params: tuple = ()
         if status:
             query += " WHERE status = ?"
             params = (status,)
-        query += " ORDER BY opened_at DESC LIMIT ?"
+        query += " ORDER BY opened_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params = params + (limit,)
         with self._cursor() as cur:
-            cur.execute(query, params + (limit,))
+            cur.execute(query, params)
             return [json.loads(r["payload"]) for r in cur.fetchall()]
 
     # --- sync ------------------------------------------------------------
@@ -257,7 +263,17 @@ class EdgeStore:
             return [dict(r) for r in rows]
         return [{"row_key": r["row_key"], **json.loads(r["payload"])} for r in rows]
 
-    def mark_synced(self, table: str, keys: Iterable[Any]) -> int:
+    def mark_synced(self, table: str, keys: Iterable[Any],
+                    versions: Iterable[Any] | None = None) -> int:
+        """Stamp rows as uploaded.
+
+        `versions` carries the `updated_at` each row had when it was read for
+        upload. An alert that escalated or resolved while its previous version
+        was in flight no longer matches, stays unsynced, and goes up on the next
+        pass; stamping it blindly would leave the cloud with a stale record for
+        ever. Telemetry and diagnoses are never edited in place, so they need
+        no version.
+        """
         key_column = {"telemetry": "id", "diagnoses": "id",
                       "alerts": "alert_id", "animals": "animal_id"}
         if table not in key_column:
@@ -267,8 +283,14 @@ class EdgeStore:
             return 0
 
         stamp = _now()
-        placeholders = ",".join("?" for _ in keys)
         with self._cursor() as cur:
+            if versions is not None and table == "alerts":
+                cur.executemany(
+                    "UPDATE alerts SET synced_at = ? WHERE alert_id = ? AND updated_at IS ?",
+                    [(stamp, key, version) for key, version in zip(keys, versions)],
+                )
+                return cur.rowcount
+            placeholders = ",".join("?" for _ in keys)
             cur.execute(
                 f"UPDATE {table} SET synced_at = ? "  # noqa: S608 - table is allow-listed above
                 f"WHERE {key_column[table]} IN ({placeholders})",

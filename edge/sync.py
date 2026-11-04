@@ -24,8 +24,16 @@ from typing import Any
 log = logging.getLogger("vetra.sync")
 
 # Tables in dependency order: an alert referring to an unknown animal is
-# awkward for the server to file, so animals go up first.
-SYNC_ORDER = ("animals", "telemetry", "diagnoses", "alerts")
+# awkward for the server to file, so animals go up first. Diagnoses and alerts
+# are small and are the records that matter, so they drain before bulk
+# telemetry; a link that only has capacity for a few batches carries the
+# health record first.
+SYNC_ORDER = ("animals", "diagnoses", "alerts", "telemetry")
+
+# The cloud rejects these as malformed. A row it will never accept must not
+# block the queue behind it, so such rows are dropped from the queue and
+# logged at error level instead of being retried for ever.
+REJECTED_AS_MALFORMED = (400, 422)
 
 ENDPOINTS = {
     "animals": "/api/sync/animals",
@@ -33,6 +41,15 @@ ENDPOINTS = {
     "diagnoses": "/api/sync/diagnoses",
     "alerts": "/api/sync/alerts",
 }
+
+
+def _error_detail(exc: urllib.error.HTTPError) -> str:
+    """The server's own one-line reason, if it sent one."""
+    try:
+        body = json.loads(exc.read().decode("utf-8") or "{}")
+        return str(body.get("error") or exc.reason)
+    except (ValueError, OSError):
+        return str(exc.reason)
 
 
 @dataclass(slots=True)
@@ -61,6 +78,7 @@ class CloudSync:
         self.last_error: str | None = None
         self.last_success_at: float | None = None
         self.uploaded_total = 0
+        self.dropped_total = 0
 
     # --- transport -------------------------------------------------------
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -88,17 +106,38 @@ class CloudSync:
             if not rows:
                 continue
 
+            keys = [r["row_key"] if "row_key" in r else r["animal_id"] for r in rows]
+            # The version each row had when read: a row edited while this
+            # batch is in flight must not be stamped as uploaded.
+            versions = [r.get("updated_at") for r in rows] if table == "alerts" else None
+
             try:
                 self._post(ENDPOINTS[table], {"records": rows})
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
+            except urllib.error.HTTPError as exc:
+                detail = _error_detail(exc)
+                if exc.code in REJECTED_AS_MALFORMED:
+                    log.error("cloud rejected %d %s rows as malformed (%s); dropping them "
+                              "from the upload queue", len(rows), table, detail)
+                    self.store.mark_synced(table, keys, versions)
+                    self.dropped_total += len(rows)
+                    continue
+                if exc.code == 413 and self.config.batch_size > 1:
+                    self.config.batch_size = max(1, self.config.batch_size // 2)
+                    log.warning("cloud says a %s batch is too large; retrying with %d rows",
+                                table, self.config.batch_size)
+                    continue
+                self.online = False
+                self.last_error = f"HTTP {exc.code}: {detail}"
+                log.warning("sync failed for %s: %s", table, self.last_error)
+                return uploaded
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 self.online = False
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 log.warning("sync failed for %s: %s", table, self.last_error)
                 # Stop the pass here rather than hammering a link that is down.
                 return uploaded
 
-            keys = [r["row_key"] if "row_key" in r else r["animal_id"] for r in rows]
-            self.store.mark_synced(table, keys)
+            self.store.mark_synced(table, keys, versions)
             uploaded[table] = len(rows)
             self.uploaded_total += len(rows)
             log.info("synced %d %s rows", len(rows), table)
@@ -142,13 +181,16 @@ class CloudSync:
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=5.0)
+            # A POST in flight may take the full request timeout to come back;
+            # waiting it out keeps the thread from touching a closed store.
+            self._thread.join(timeout=self.config.timeout_seconds + 2.0)
 
     def status(self) -> dict[str, Any]:
         return {
             "online": self.online,
             "base_url": self.config.base_url,
             "uploaded_total": self.uploaded_total,
+            "dropped_total": self.dropped_total,
             "pending": self.store.pending_counts(),
             "last_error": self.last_error,
             "last_success_at": self.last_success_at,
