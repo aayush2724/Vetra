@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { HealthRecordRepository } from './db.js';
+import { DEMO_FARMERS } from './lib/demo-farmers.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.VETRA_CLOUD_DB ?? join(HERE, '..', 'vetra_cloud.db');
@@ -78,14 +79,14 @@ const SIGNATURES = {
 
 /** The demonstration herd. Sick animals fall ill half-way through the history. */
 export const HERD = [
-  { animal_id: 'CA-0001', species: 'cattle',  name: 'Ganga',   owner: 'Ramesh', condition: 'healthy' },
-  { animal_id: 'CA-0002', species: 'cattle',  name: 'Lakshmi', owner: 'Ramesh', condition: 'infectious_disease' },
-  { animal_id: 'BU-0003', species: 'buffalo', name: 'Kali',    owner: 'Sunita', condition: 'healthy' },
-  { animal_id: 'BU-0004', species: 'buffalo', name: null,      owner: 'Sunita', condition: 'respiratory_disease' },
-  { animal_id: 'GO-0005', species: 'goat',    name: 'Moti',    owner: 'Imran',  condition: 'heat_stress' },
-  { animal_id: 'GO-0006', species: 'goat',    name: null,      owner: 'Imran',  condition: 'healthy' },
-  { animal_id: 'SH-0007', species: 'sheep',   name: 'Bholi',   owner: 'Devi',   condition: 'mobility_disorder' },
-  { animal_id: 'SH-0008', species: 'sheep',   name: null,      owner: 'Devi',   condition: 'healthy' },
+  { animal_id: 'CA-0001', species: 'cattle',  name: 'Ganga',   owner: 'ramesh', condition: 'healthy' },
+  { animal_id: 'CA-0002', species: 'cattle',  name: 'Lakshmi', owner: 'ramesh', condition: 'infectious_disease' },
+  { animal_id: 'BU-0003', species: 'buffalo', name: 'Kali',    owner: 'sunita', condition: 'healthy' },
+  { animal_id: 'BU-0004', species: 'buffalo', name: null,      owner: 'sunita', condition: 'respiratory_disease' },
+  { animal_id: 'GO-0005', species: 'goat',    name: 'Moti',    owner: 'imran',  condition: 'heat_stress' },
+  { animal_id: 'GO-0006', species: 'goat',    name: null,      owner: 'imran',  condition: 'healthy' },
+  { animal_id: 'SH-0007', species: 'sheep',   name: 'Bholi',   owner: 'devi',   condition: 'mobility_disorder' },
+  { animal_id: 'SH-0008', species: 'sheep',   name: null,      owner: 'devi',   condition: 'healthy' },
 ];
 
 const HOURS = 12;              // of minute-resolution history per animal
@@ -319,8 +320,12 @@ export function seedRepository(repo, { now = new Date(), seed = 7 } = {}) {
   const rng = mulberry32(seed);
   const end = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
   const enrolledAt = new Date(end.getTime() - 30 * 24 * 3_600_000).toISOString();
-  const written = { animals: 0, telemetry: 0, diagnoses: 0, alerts: 0 };
+  const written = { farmers: 0, animals: 0, telemetry: 0, diagnoses: 0, alerts: 0 };
 
+  for (const farmer of DEMO_FARMERS) {
+    repo.saveFarmer(farmer);
+    written.farmers += 1;
+  }
   written.animals += repo.saveAnimals(HERD.map((a) => ({
     animal_id: a.animal_id, species: a.species, name: a.name, owner: a.owner, enrolled_at: enrolledAt,
   })));

@@ -15,8 +15,11 @@
  * whose response it did not see, and a retry must not duplicate a record.
  */
 import Database from 'better-sqlite3';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+
+import { NORMAL_RANGE, REPORT_CHANNELS } from './lib/species.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS animals (
@@ -81,7 +84,23 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts (status, opened_at DESC);
 CREATE INDEX IF NOT EXISTS idx_alerts_animal ON alerts (animal_id, opened_at DESC);
+
+-- Who an animal belongs to. Kept on the cloud: collars and the gateway know
+-- nothing about people, and ownership changes at the farm office, not on the
+-- device. animals.owner holds a farmer_id; older rows may hold a bare name.
+CREATE TABLE IF NOT EXISTS farmers (
+  farmer_id  TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  phone      TEXT,
+  village    TEXT,
+  notes      TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
+
+/** A readable id for a new farmer: the name as a slug, made unique if taken. */
+const slugOf = (name) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'farmer';
 
 const now = () => new Date().toISOString();
 
@@ -165,6 +184,25 @@ export class HealthRecordRepository {
       resolveAlert: this.db.prepare(`
         UPDATE alerts SET status = 'resolved', resolved_at = ?, updated_at = ?
         WHERE alert_id = ? AND status != 'resolved'`),
+
+      upsertFarmer: this.db.prepare(`
+        INSERT INTO farmers (farmer_id, name, phone, village, notes, created_at, updated_at)
+        VALUES (@farmer_id, @name, @phone, @village, @notes, @created_at, @updated_at)
+        ON CONFLICT(farmer_id) DO UPDATE SET
+          name       = excluded.name,
+          phone      = COALESCE(excluded.phone, farmers.phone),
+          village    = COALESCE(excluded.village, farmers.village),
+          notes      = COALESCE(excluded.notes, farmers.notes),
+          updated_at = excluded.updated_at`),
+
+      // Each field is written only when the caller sent it, so assigning an
+      // owner never blanks a name and vice versa.
+      setOwner: this.db.prepare(`
+        UPDATE animals SET
+          owner      = CASE WHEN @owner_set THEN @owner ELSE owner END,
+          name       = CASE WHEN @name_set THEN @name ELSE name END,
+          updated_at = @updated_at
+        WHERE animal_id = @animal_id`),
     };
   }
 
@@ -255,6 +293,9 @@ export class HealthRecordRepository {
     // the herd screen is one query rather than one per animal.
     return this.db.prepare(`
       SELECT a.*,
+             COALESCE(f.name, a.owner) AS farmer_name,
+             f.phone         AS farmer_phone,
+             f.village       AS farmer_village,
              d.condition     AS latest_condition,
              d.confidence    AS latest_confidence,
              d.timestamp     AS latest_seen,
@@ -267,13 +308,18 @@ export class HealthRecordRepository {
                                          WHEN 'medium' THEN 2 ELSE 1 END DESC
                LIMIT 1) AS worst_severity
       FROM animals a
+      LEFT JOIN farmers f ON f.farmer_id = a.owner
       LEFT JOIN diagnoses d ON d.animal_id = a.animal_id
         AND d.timestamp = (SELECT MAX(timestamp) FROM diagnoses WHERE animal_id = a.animal_id)
       ORDER BY a.animal_id`).all();
   }
 
   getAnimal(animalId) {
-    return this.db.prepare('SELECT * FROM animals WHERE animal_id = ?').get(animalId) ?? null;
+    return this.db.prepare(`
+      SELECT a.*, COALESCE(f.name, a.owner) AS farmer_name,
+             f.phone AS farmer_phone, f.village AS farmer_village
+      FROM animals a LEFT JOIN farmers f ON f.farmer_id = a.owner
+      WHERE a.animal_id = ?`).get(animalId) ?? null;
   }
 
   getTelemetry(animalId, limit = 720) {
@@ -295,20 +341,25 @@ export class HealthRecordRepository {
     const params = [];
     if (status) {
       if (status === 'active') {
-        where.push("status IN ('open', 'acknowledged')");
+        where.push("al.status IN ('open', 'acknowledged')");
       } else {
-        where.push('status = ?');
+        where.push('al.status = ?');
         params.push(status);
       }
     }
-    if (severity) { where.push('severity = ?'); params.push(severity); }
+    if (severity) { where.push('al.severity = ?'); params.push(severity); }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     return this.db.prepare(`
-      SELECT alert_id, animal_id, condition, condition_label, severity, status, message,
-             opened_at, updated_at, resolved_at, acknowledged_by, payload
-      FROM alerts ${clause}
-      ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3
-                             WHEN 'medium' THEN 2 ELSE 1 END DESC, opened_at DESC
+      SELECT al.alert_id, al.animal_id, al.condition, al.condition_label, al.severity, al.status,
+             al.message, al.opened_at, al.updated_at, al.resolved_at, al.acknowledged_by, al.payload,
+             an.name AS animal_name, an.owner AS owner,
+             COALESCE(f.name, an.owner) AS farmer_name, f.phone AS farmer_phone
+      FROM alerts al
+      LEFT JOIN animals an ON an.animal_id = al.animal_id
+      LEFT JOIN farmers f ON f.farmer_id = an.owner
+      ${clause}
+      ORDER BY CASE al.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3
+                                WHEN 'medium' THEN 2 ELSE 1 END DESC, al.opened_at DESC
       LIMIT ?`).all(...params, limit)
       .map((r) => ({ ...r, rule_flags: JSON.parse(r.payload).rule_flags ?? [] }));
   }
@@ -321,6 +372,142 @@ export class HealthRecordRepository {
   resolveAlert(alertId) {
     const stamp = now();
     return this.stmt.resolveAlert.run(stamp, stamp, alertId).changes > 0;
+  }
+
+  // --- farmers ----------------------------------------------------------
+  listFarmers() {
+    // Each farmer with how many animals they own and how many are under an
+    // active alert, so the dashboard can say who needs a call first.
+    return this.db.prepare(`
+      SELECT f.*,
+             (SELECT COUNT(*) FROM animals a WHERE a.owner = f.farmer_id) AS animals,
+             (SELECT COUNT(DISTINCT al.animal_id) FROM alerts al
+                JOIN animals a ON a.animal_id = al.animal_id
+               WHERE a.owner = f.farmer_id AND al.status IN ('open', 'acknowledged')) AS animals_under_alert,
+             (SELECT al.severity FROM alerts al
+                JOIN animals a ON a.animal_id = al.animal_id
+               WHERE a.owner = f.farmer_id AND al.status IN ('open', 'acknowledged')
+               ORDER BY CASE al.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3
+                                         WHEN 'medium' THEN 2 ELSE 1 END DESC
+               LIMIT 1) AS worst_severity
+      FROM farmers f
+      ORDER BY f.name`).all();
+  }
+
+  getFarmer(farmerId) {
+    return this.db.prepare('SELECT * FROM farmers WHERE farmer_id = ?').get(farmerId) ?? null;
+  }
+
+  saveFarmer({ farmer_id, name, phone = null, village = null, notes = null }) {
+    const stamp = now();
+    let id = farmer_id;
+    if (!id) {
+      id = slugOf(name);
+      if (this.getFarmer(id)) id = `${id}-${randomBytes(2).toString('hex')}`;
+    }
+    this.stmt.upsertFarmer.run({
+      farmer_id: id, name, phone, village, notes, created_at: stamp, updated_at: stamp,
+    });
+    return this.getFarmer(id);
+  }
+
+  /** Set an animal's owner and/or display name. Fields left undefined are untouched. */
+  assignAnimal(animalId, { owner, name } = {}) {
+    return this.stmt.setOwner.run({
+      animal_id: animalId,
+      owner_set: owner === undefined ? 0 : 1,
+      owner: owner ?? null,
+      name_set: name === undefined ? 0 : 1,
+      name: name ?? null,
+      updated_at: now(),
+    }).changes > 0;
+  }
+
+  // --- report -----------------------------------------------------------
+  /**
+   * Everything known about one animal, assembled for a printable record:
+   * identity and owner, the span of readings held, each vital's mean, range
+   * and share of time outside the species band, the diagnosis history as runs
+   * of one condition, and every alert ever raised, resolved ones included.
+   */
+  animalReport(animalId) {
+    const animal = this.getAnimal(animalId);
+    if (!animal) return null;
+    const ranges = NORMAL_RANGE[animal.species] ?? {};
+
+    const span = this.db.prepare(`
+      SELECT MIN(timestamp) AS first_reading, MAX(timestamp) AS last_reading, COUNT(*) AS readings
+      FROM telemetry WHERE animal_id = ?`).get(animalId);
+    const first = span.first_reading ? new Date(span.first_reading).getTime() : null;
+    const last = span.last_reading ? new Date(span.last_reading).getTime() : null;
+    const days = first != null && last != null ? (last - first) / 86_400_000 : 0;
+
+    // Column names come from REPORT_CHANNELS, never from the request.
+    const vitals = REPORT_CHANNELS.map(({ key, label, unit, digits }) => {
+      const range = ranges[key] ?? null;
+      const outside = range
+        ? `AVG(CASE WHEN ${key} < ? OR ${key} > ? THEN 1.0 ELSE 0.0 END)`
+        : 'NULL';
+      const row = this.db.prepare(`
+        SELECT AVG(${key}) AS mean, MIN(${key}) AS min, MAX(${key}) AS max, ${outside} AS outside
+        FROM telemetry WHERE animal_id = ? AND ${key} IS NOT NULL`)
+        .get(...(range ? [range[0], range[1]] : []), animalId);
+      return {
+        channel: key, label, unit, digits, normal: range,
+        mean: row.mean, min: row.min, max: row.max, outside_normal: row.outside,
+      };
+    });
+
+    const diagnoses = this.db.prepare(`
+      SELECT timestamp, condition, confidence, rule_severity FROM diagnoses
+      WHERE animal_id = ? ORDER BY timestamp`).all(animalId);
+    const history = [];
+    const counts = new Map();
+    for (const d of diagnoses) {
+      counts.set(d.condition, (counts.get(d.condition) ?? 0) + 1);
+      const run = history.at(-1);
+      if (run && run.condition === d.condition) {
+        run.to = d.timestamp;
+        run.windows += 1;
+        run.peak_confidence = Math.max(run.peak_confidence, d.confidence);
+      } else {
+        history.push({
+          condition: d.condition, from: d.timestamp, to: d.timestamp,
+          windows: 1, peak_confidence: d.confidence,
+        });
+      }
+    }
+
+    const alerts = this.db.prepare(`
+      SELECT alert_id, condition, condition_label, severity, status, message, opened_at,
+             updated_at, resolved_at, acknowledged_by, acknowledged_at, payload
+      FROM alerts WHERE animal_id = ? ORDER BY opened_at DESC`).all(animalId)
+      .map(({ payload, ...row }) => {
+        const record = JSON.parse(payload);
+        return {
+          ...row,
+          confidence: record.confidence ?? null,
+          rule_flags: record.rule_flags ?? [],
+          notify: record.notify ?? [],
+        };
+      });
+    const tally = (status) => alerts.filter((a) => a.status === status).length;
+
+    return {
+      generated_at: now(),
+      animal,
+      period: { ...span, days },
+      vitals,
+      latest_diagnosis: this.getDiagnoses(animalId, 1)[0] ?? null,
+      condition_history: history.reverse(),
+      diagnosis_counts: [...counts.entries()]
+        .map(([condition, n]) => ({ condition, n })).sort((a, b) => b.n - a.n),
+      alerts,
+      alert_counts: {
+        total: alerts.length, open: tally('open'),
+        acknowledged: tally('acknowledged'), resolved: tally('resolved'),
+      },
+    };
   }
 
   herdSummary() {

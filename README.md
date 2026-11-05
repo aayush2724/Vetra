@@ -191,6 +191,25 @@ The gateway also accepts MQTT. Install a broker (`sudo dnf install mosquitto`,
 Without a broker the gateway logs that MQTT is unavailable and keeps serving
 REST, so nothing in the demo depends on it.
 
+### Farmers and animal reports
+
+Collars carry an animal id, never a person, so ownership is recorded on the
+cloud: the dashboard keeps a registry of farmers (name, phone, village) and
+each animal is assigned to one from its record. The herd grid, the alert feed
+and the animal record then show whose animal is in trouble and which number to
+call, the Overview has a farmers card with animals under alert per farmer, and
+the feed and herd can be filtered to one farmer. A gateway sync never touches
+ownership, so a re-sent animal keeps its farmer and name.
+
+`make demo` registers four demonstration farmers and shares the herd between
+them (`server/src/assign-farmers.js`, which only talks to the cloud API).
+
+Every animal has a **Full report** button on its record: identity and owner,
+the span of readings held, each vital's mean, range and share of time outside
+the species band, the diagnosis history as runs of one condition, and every
+alert ever raised, resolved ones included. Print it from the browser for a PDF
+or download the JSON it was built from (`GET /api/animals/:id/report`).
+
 ### Symptom check
 
 The dashboard's **Symptom check** tab diagnoses from drop-downs instead of

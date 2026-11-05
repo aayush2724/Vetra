@@ -104,6 +104,8 @@ docker-up:  ## Start the cloud service and the edge gateway in the background
 docker-demo:  ## Start everything in Docker and stream a herd through it
 	$(COMPOSE) --profile demo build
 	$(COMPOSE) --profile demo run --rm simulator
+	@echo "Registering the demo farmers and assigning the herd ..."
+	-$(COMPOSE) exec -T cloud node src/assign-farmers.js http://localhost:4000
 	@echo ""
 	@echo "Alerts raised:"
 	@$(COMPOSE) logs --no-log-prefix gateway | grep -E "OPENED|ESCALATED" | sed 's/.*vetra.agent: /  /' || echo "  (none yet)"

@@ -34,11 +34,9 @@ server/*.db
 *.db-journal
 
 # Secrets
-.env
-.env.local
 serviceAccountKey.json
 
 # OS / editor
 .DS_Store
-.vscode/
 .idea/
+config.bat

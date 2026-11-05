@@ -158,6 +158,9 @@ SQL. A Firestore version implements the same methods:
 | `getTelemetry` | subcollection query ordered by document id, limited |
 | `listAlerts` | `alerts` where `status == 'open'`, ordered by severity |
 | `herdSummary` | counter documents maintained on write |
+| `listFarmers` / `saveFarmer` / `getFarmer` | `farmers/{farmer_id}` — `set(..., { merge: true })`; counts denormalised on write |
+| `assignAnimal` | `animals/{animal_id}` — `update({ owner, name })` |
+| `animalReport` | the animal document plus its `telemetry`, `diagnoses` and `alerts` subcollections, aggregated client-side or by a scheduled function |
 
 Two differences matter. Firestore has no joins, so `listAnimals` needs the
 latest diagnosis denormalised onto the animal document at write time. And

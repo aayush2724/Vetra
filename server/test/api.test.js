@@ -39,6 +39,12 @@ const post = (path, body) =>
   });
 
 const get = (path) => fetch(`${base}${path}`);
+const patch = (path, body) =>
+  fetch(`${base}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 
 const READING = {
   animal_id: 'CA-0001', species: 'cattle', timestamp: '2026-05-01T10:00:00+00:00',
@@ -253,6 +259,87 @@ describe('gateway re-sends and client mistakes', () => {
     await post('/api/sync/animals', { records: [{ animal_id: 'CA-0002', species: 'goat' }] });
     const summary = await (await get('/api/summary')).json();
     assert.ok(new Date(summary.last_sync_at).getTime() >= before);
+  });
+});
+
+describe('farmers and reports', () => {
+  test('a farmer can be registered and listed with counts', async () => {
+    const res = await post('/api/farmers', {
+      name: 'Ramesh Yadav', phone: '+91 98765 10001', village: 'Malihabad',
+    });
+    assert.equal(res.status, 201);
+    const { farmer } = await res.json();
+    assert.equal(farmer.farmer_id, 'ramesh-yadav');
+    const { farmers } = await (await get('/api/farmers')).json();
+    assert.equal(farmers.length, 1);
+    assert.equal(farmers[0].animals, 0);
+  });
+
+  test('registering a farmer needs a name', async () => {
+    assert.equal((await post('/api/farmers', { phone: '1' })).status, 400);
+  });
+
+  test('two farmers with the same name get distinct ids', async () => {
+    const { farmer } = await (await post('/api/farmers', { name: 'Ramesh Yadav' })).json();
+    assert.notEqual(farmer.farmer_id, 'ramesh-yadav');
+    assert.ok(farmer.farmer_id.startsWith('ramesh-yadav-'));
+  });
+
+  test('an animal can be assigned to a farmer and given a name', async () => {
+    const res = await patch('/api/animals/CA-0001', { owner: 'ramesh-yadav', name: 'Ganga' });
+    assert.equal(res.status, 200);
+    const { animal } = await res.json();
+    assert.equal(animal.farmer_name, 'Ramesh Yadav');
+    assert.equal(animal.name, 'Ganga');
+
+    const { animals } = await (await get('/api/animals')).json();
+    assert.equal(animals[0].farmer_phone, '+91 98765 10001');
+    const { farmers } = await (await get('/api/farmers')).json();
+    assert.equal(farmers.find((f) => f.farmer_id === 'ramesh-yadav').animals, 1);
+  });
+
+  test('assigning an unknown farmer or animal is a 404, an empty patch a 400', async () => {
+    assert.equal((await patch('/api/animals/CA-0001', { owner: 'nobody' })).status, 404);
+    assert.equal((await patch('/api/animals/NOPE-1', { owner: 'ramesh-yadav' })).status, 404);
+    assert.equal((await patch('/api/animals/CA-0001', {})).status, 400);
+    assert.equal((await patch('/api/animals/CA-0001', { owner: 42 })).status, 400);
+  });
+
+  test('a gateway re-sync of the animal keeps its owner and name', async () => {
+    // The gateway sends what it knows, which is species only.
+    await post('/api/sync/animals', { records: [{ animal_id: 'CA-0001', species: 'cattle' }] });
+    const { animal } = await (await get('/api/animals/CA-0001')).json();
+    assert.equal(animal.owner, 'ramesh-yadav');
+    assert.equal(animal.name, 'Ganga');
+  });
+
+  test('alerts carry the farmer to call', async () => {
+    await post('/api/sync/alerts', { records: [{ ...ALERT, alert_id: 'a-farmer' }] });
+    const { alerts } = await (await get('/api/alerts?status=open')).json();
+    const mine = alerts.find((a) => a.alert_id === 'a-farmer');
+    assert.equal(mine.farmer_name, 'Ramesh Yadav');
+    assert.equal(mine.farmer_phone, '+91 98765 10001');
+    assert.equal(mine.animal_name, 'Ganga');
+  });
+
+  test('the report assembles owner, vitals, history and every alert', async () => {
+    const res = await get('/api/animals/CA-0001/report');
+    assert.equal(res.status, 200);
+    const report = await res.json();
+    assert.equal(report.animal.farmer_name, 'Ramesh Yadav');
+    assert.ok(report.period.readings >= 3);
+    const hr = report.vitals.find((v) => v.channel === 'heart_rate');
+    assert.deepEqual(hr.normal, [48, 84]);
+    assert.equal(hr.outside_normal, 0, 'a 68 bpm cow is inside its band');
+    assert.ok(report.condition_history.length >= 1);
+    assert.ok(report.alerts.some((a) => a.alert_id === 'a-1' && a.status === 'resolved'),
+      'resolved alerts stay in the record');
+    assert.equal(report.alert_counts.total, report.alerts.length);
+    assert.ok(Array.isArray(report.alerts[0].rule_flags));
+  });
+
+  test('a report for an unknown animal is a 404', async () => {
+    assert.equal((await get('/api/animals/NOPE-1/report')).status, 404);
   });
 });
 

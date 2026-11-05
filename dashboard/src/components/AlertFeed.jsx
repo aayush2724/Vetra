@@ -11,7 +11,9 @@ const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
  * troubled animal look like a herd-wide outbreak, so each animal appears once,
  * ordered by its worst alert, with its concerns nested underneath.
  */
-export default function AlertFeed({ alerts, freshIds, onAcknowledge, onResolve, onSelectAnimal }) {
+export default function AlertFeed({
+  alerts, freshIds, animalsById, onAcknowledge, onResolve, onSelectAnimal,
+}) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
 
@@ -55,6 +57,12 @@ export default function AlertFeed({ alerts, freshIds, onAcknowledge, onResolve, 
         const sorted = [...list].sort(
           (a, b) => (SEVERITY_ORDER[b.severity] ?? 0) - (SEVERITY_ORDER[a.severity] ?? 0),
         );
+        // The live stream sends the gateway's record, which knows nothing about
+        // people; the herd list is the source for the farmer to call.
+        const animal = animalsById?.get(animalId);
+        const farmer = animal?.farmer_name ?? sorted[0].farmer_name ?? null;
+        const phone = animal?.farmer_phone ?? sorted[0].farmer_phone ?? null;
+        const name = animal?.name ?? sorted[0].animal_name ?? null;
         return (
           <div className="alert-group" key={animalId}>
             <div className="alert-group-head">
@@ -63,8 +71,11 @@ export default function AlertFeed({ alerts, freshIds, onAcknowledge, onResolve, 
                 onClick={() => onSelectAnimal?.(animalId)}
                 title="Open this animal's record"
               >
-                {animalId}
+                {animalId}{name ? ` · ${name}` : ''}
               </button>
+              <span className={`who ${farmer ? '' : 'none'}`}>
+                {farmer ? `${farmer}${phone ? ` · ${phone}` : ''}` : 'no farmer assigned'}
+              </span>
               <span className="count">
                 {sorted.length} {sorted.length === 1 ? 'concern' : 'concerns'}
               </span>

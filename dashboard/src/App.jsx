@@ -1,16 +1,20 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  acknowledgeAlert, getAlerts, getAnimals, getSummary, resolveAlert, subscribe,
+  acknowledgeAlert, getAlerts, getAnimals, getFarmers, getSummary, resolveAlert, subscribe,
 } from './api.js';
 import AlertFeed from './components/AlertFeed.jsx';
 import HerdGrid from './components/HerdGrid.jsx';
+import Overview from './components/Overview.jsx';
 import SymptomCheck from './components/SymptomCheck.jsx';
+import { IconMoon, IconSun } from './components/icons.jsx';
+import { timeAgo } from './format.js';
 
 // The charting library is by far the largest dependency and is only needed once
 // someone opens an individual animal. Splitting it keeps the alert screen — the
-// one that matters on a slow rural connection — small.
+// one that matters on a slow rural connection — small. The report is split for
+// the same reason: it is opened rarely and printed, not watched.
 const AnimalDetail = lazy(() => import('./components/AnimalDetail.jsx'));
-import { timeAgo } from './format.js';
+const AnimalReport = lazy(() => import('./components/AnimalReport.jsx'));
 
 // Whoever is signed in acknowledges alerts under this name. A real deployment
 // would take it from an auth session; the project scope stops short of that.
@@ -20,15 +24,31 @@ const OPERATOR = 'demo-vet';
 // anything that changed while the page was backgrounded.
 const POLL_MS = 20000;
 
+// Light is the default look; the choice persists per browser. Storage can be
+// unavailable (private windows, blocked site data), so every access is guarded.
+const THEME_KEY = 'vetra-theme';
+const readTheme = () => {
+  try { return localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+};
+
 export default function App() {
   const [tab, setTab] = useState('overview');
   const [summary, setSummary] = useState(null);
   const [animals, setAnimals] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [farmers, setFarmers] = useState([]);
+  const [ownerFilter, setOwnerFilter] = useState('');
   const [selected, setSelected] = useState(null);
+  const [reportFor, setReportFor] = useState(null);
   const [live, setLive] = useState(false);
   const [error, setError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [theme, setTheme] = useState(readTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem(THEME_KEY, theme); } catch { /* per-viewer convenience only */ }
+  }, [theme]);
 
   // Alerts that arrived over the live stream, so they can be highlighted once.
   const [freshIds, setFreshIds] = useState(() => new Set());
@@ -36,12 +56,15 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [summaryData, animalData, alertData] = await Promise.all([
+      const [summaryData, animalData, alertData, farmerData] = await Promise.all([
         getSummary(), getAnimals(), getAlerts('active'),
+        // An older cloud service without the registry must not blank the page.
+        getFarmers().catch(() => ({ farmers: [] })),
       ]);
       setSummary(summaryData);
       setAnimals(animalData.animals);
       setAlerts(alertData.alerts);
+      setFarmers(farmerData.farmers);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -81,6 +104,7 @@ export default function App() {
         });
       },
       onAlertUpdated: () => load(),
+      onAnimalUpdated: () => load(),
       onDiagnosis: () => setRefreshKey((k) => k + 1),
     });
 
@@ -113,10 +137,37 @@ export default function App() {
 
   const openAnimal = useCallback((animalId) => {
     setSelected(animalId);
+    setReportFor(null);
     setTab('herd');
   }, []);
 
+  const switchTab = (key) => {
+    setTab(key);
+    setReportFor(null);
+  };
+
+  // The farmer filter narrows the feed and the herd; the overview cards stay
+  // herd-wide, since that is what "the herd at a glance" means.
+  const animalsById = useMemo(() => new Map(animals.map((a) => [a.animal_id, a])), [animals]);
+  const visibleAnimals = useMemo(
+    () => (ownerFilter ? animals.filter((a) => a.owner === ownerFilter) : animals),
+    [animals, ownerFilter],
+  );
+  const visibleAlerts = useMemo(
+    () => (ownerFilter
+      ? alerts.filter((a) => animalsById.get(a.animal_id)?.owner === ownerFilter)
+      : alerts),
+    [alerts, animalsById, ownerFilter],
+  );
+
   const critical = alerts.filter((a) => a.severity === 'critical').length;
+
+  const filterBar = (
+    <FarmerFilter
+      farmers={farmers} value={ownerFilter} onChange={setOwnerFilter}
+      animals={visibleAnimals.length} alerts={visibleAlerts.length}
+    />
+  );
 
   return (
     <div className="app">
@@ -129,8 +180,8 @@ export default function App() {
         <nav className="tabs" role="tablist">
           {[['overview', 'Overview'], ['herd', 'Herd'], ['symptoms', 'Symptom check']].map(([key, label]) => (
             <button
-              key={key} role="tab" aria-selected={tab === key}
-              onClick={() => setTab(key)}
+              key={key} role="tab" aria-selected={tab === key && !reportFor}
+              onClick={() => switchTab(key)}
             >
               {label}
             </button>
@@ -141,12 +192,21 @@ export default function App() {
           <span className="dot" />
           {live ? 'Live' : 'Offline'}
         </span>
+
+        <button
+          type="button" className="theme-btn"
+          onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          title={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+        >
+          {theme === 'dark' ? <IconSun /> : <IconMoon />}
+          {theme === 'dark' ? 'Light' : 'Dark'}
+        </button>
       </header>
 
       <main>
         {error && <div className="banner">Cannot reach the cloud service: {error}</div>}
 
-        <div className="tiles">
+        {tab !== 'overview' && !reportFor && <div className="tiles">
           <Tile label="Animals monitored" value={summary?.animals ?? '--'} />
           <Tile
             label="Open alerts" value={alerts.length}
@@ -157,11 +217,22 @@ export default function App() {
           <Tile label="Readings stored" value={fmt(summary?.readings)} />
           <Tile label="Last sync" value={summary?.last_sync_at ? timeAgo(summary.last_sync_at) : '--'}
                 sub="from farm gateway" />
-        </div>
+        </div>}
 
-        {tab === 'symptoms' ? (
+        {reportFor ? (
+          <Suspense fallback={<div className="card"><div className="card-body"><div className="skeleton" style={{ height: 320 }} /></div></div>}>
+            <AnimalReport animalId={reportFor} onClose={() => setReportFor(null)} />
+          </Suspense>
+        ) : tab === 'symptoms' ? (
           <SymptomCheck />
         ) : tab === 'overview' ? (
+          <>
+          <Overview
+            summary={summary} animals={animals} alerts={alerts} live={live}
+            farmers={farmers} ownerFilter={ownerFilter}
+            onPickFarmer={(id) => setOwnerFilter((current) => (current === id ? '' : id))}
+          />
+          {filterBar}
           <div className="columns">
             <section className="card">
               <div className="card-head">
@@ -169,7 +240,7 @@ export default function App() {
                 <span className="hint">grouped by animal, worst first</span>
               </div>
               <AlertFeed
-                alerts={alerts} freshIds={freshIds}
+                alerts={visibleAlerts} freshIds={freshIds} animalsById={animalsById}
                 onAcknowledge={handleAcknowledge} onResolve={handleResolve}
                 onSelectAnimal={openAnimal}
               />
@@ -177,15 +248,18 @@ export default function App() {
 
             <section className="card">
               <div className="card-head">
-                <h2>Herd status</h2>
-                <span className="hint">{animals.length} animals</span>
+                <h2>Animals</h2>
+                <span className="hint">{visibleAnimals.length} animals</span>
               </div>
               <div className="card-body">
-                <HerdGrid animals={animals} selectedId={selected} onSelect={openAnimal} />
+                <HerdGrid animals={visibleAnimals} selectedId={selected} onSelect={openAnimal} />
               </div>
             </section>
           </div>
+          </>
         ) : (
+          <>
+          {filterBar}
           <div className="columns">
             <section className="card">
               <div className="card-head">
@@ -193,17 +267,21 @@ export default function App() {
                 <span className="hint">{selected ?? 'none selected'}</span>
               </div>
               <Suspense fallback={<div className="card-body"><div className="skeleton" style={{ height: 260 }} /></div>}>
-                <AnimalDetail animalId={selected} refreshKey={refreshKey} />
+                <AnimalDetail
+                  animalId={selected} refreshKey={refreshKey} farmers={farmers}
+                  onChanged={load} onReport={setReportFor}
+                />
               </Suspense>
             </section>
 
             <section className="card">
-              <div className="card-head"><h2>Herd</h2></div>
+              <div className="card-head"><h2>Herd</h2><span className="hint">{visibleAnimals.length} animals</span></div>
               <div className="card-body">
-                <HerdGrid animals={animals} selectedId={selected} onSelect={setSelected} />
+                <HerdGrid animals={visibleAnimals} selectedId={selected} onSelect={setSelected} />
               </div>
             </section>
           </div>
+          </>
         )}
       </main>
     </div>
@@ -218,6 +296,27 @@ function Tile({ label, value, sub, alarm }) {
       <div className="label">{label}</div>
       <div className="value">{value}</div>
       {sub && <div className="sub">{sub}</div>}
+    </div>
+  );
+}
+
+function FarmerFilter({ farmers, value, onChange, animals, alerts }) {
+  if (!farmers.length) return null;
+  return (
+    <div className="filter-bar no-print">
+      <label>
+        <span>Farmer</span>
+        <select value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">All farmers</option>
+          {farmers.map((f) => (
+            <option key={f.farmer_id} value={f.farmer_id}>
+              {f.name}{f.village ? ` · ${f.village}` : ''} ({f.animals})
+            </option>
+          ))}
+        </select>
+      </label>
+      {value && <button type="button" className="btn" onClick={() => onChange('')}>Show all</button>}
+      <span className="hint">{animals} animals · {alerts} active alerts</span>
     </div>
   );
 }
