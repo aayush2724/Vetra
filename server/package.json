@@ -9,6 +9,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "seed": "node src/seed.js",
+    "assign-farmers": "node src/assign-farmers.js",
     "test": "node --test test/"
   },
   "engines": { "node": ">=20" },
