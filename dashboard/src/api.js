@@ -31,6 +31,13 @@ export const acknowledgeAlert = (id, who) =>
 export const resolveAlert = (id) =>
   json(`/api/alerts/${encodeURIComponent(id)}/resolve`, { method: 'POST' });
 
+export const getFarmers = () => json('/api/farmers');
+export const saveFarmer = (farmer) =>
+  json('/api/farmers', { method: 'POST', body: JSON.stringify(farmer) });
+export const assignAnimal = (id, patch) =>
+  json(`/api/animals/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+export const getAnimalReport = (id) => json(`/api/animals/${encodeURIComponent(id)}/report`);
+
 export const getSymptomCatalog = () => json('/api/symptoms');
 export const diagnoseSymptoms = (check) =>
   json('/api/diagnose', { method: 'POST', body: JSON.stringify(check) });
@@ -59,6 +66,7 @@ export function subscribe(handlers = {}) {
   on('alert', handlers.onAlert);
   on('alert_updated', handlers.onAlertUpdated);
   on('diagnosis', handlers.onDiagnosis);
+  on('animal_updated', handlers.onAnimalUpdated);
 
   source.onopen = () => handlers.onStatus?.(true);
   source.onerror = () => handlers.onStatus?.(false);

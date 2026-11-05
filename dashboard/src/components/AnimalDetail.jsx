@@ -4,6 +4,7 @@ import {
   Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { getAnimal } from '../api.js';
+import OwnerPanel from './OwnerPanel.jsx';
 import {
   clockTime, conditionClass, conditionLabel, isOutOfRange, NORMAL_RANGE, pct, timeAgo,
 } from '../format.js';
@@ -32,8 +33,10 @@ const VITALS = [
  * what makes a trace readable to someone who does not know that 84 bpm is fine
  * for cattle but high for a buffalo.
  */
-export default function AnimalDetail({ animalId, refreshKey }) {
+export default function AnimalDetail({ animalId, refreshKey, farmers = [], onChanged, onReport }) {
   const [data, setData] = useState(null);
+  // Bumped after the owner or name changes, so the header re-reads the record.
+  const [bump, setBump] = useState(0);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const shownFor = useRef(null);
@@ -59,7 +62,7 @@ export default function AnimalDetail({ animalId, refreshKey }) {
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [animalId, refreshKey]);
+  }, [animalId, refreshKey, bump]);
 
   const series = useMemo(() => {
     if (!data?.telemetry) return [];
@@ -95,7 +98,19 @@ export default function AnimalDetail({ animalId, refreshKey }) {
             {latest ? `last reading ${timeAgo(latest.timestamp)}` : 'no readings yet'}
           </div>
         </div>
+        <button
+          type="button" className="btn no-print"
+          onClick={() => onReport?.(animal.animal_id)}
+          title="The full printable record for this animal"
+        >
+          Full report
+        </button>
       </div>
+
+      <OwnerPanel
+        animal={animal} farmers={farmers}
+        onChanged={() => { setBump((b) => b + 1); onChanged?.(); }}
+      />
 
       {latest ? (
         <div className="vitals">

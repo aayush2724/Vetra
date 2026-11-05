@@ -72,6 +72,10 @@ echo ""
 echo "Waiting for the gateway to finish syncing ..."
 sleep 12
 
+echo "Registering the demo farmers and assigning the herd ..."
+node server/src/assign-farmers.js http://localhost:4000 \
+  || echo "  (could not assign farmers; the dashboard still works, see $LOG_DIR/cloud.log)"
+
 echo ""
 echo "==================================================================="
 echo "  Dashboard   http://localhost:4000"

@@ -2,7 +2,8 @@ import { conditionClass, conditionLabel, severityClass, timeAgo } from '../forma
 
 /**
  * The herd at a glance. Each animal shows its most recent diagnosis, coloured
- * by its worst open alert so a farmer can scan for trouble without reading.
+ * by its worst open alert so a farmer can scan for trouble without reading,
+ * and the farmer it belongs to, so a vet knows whose animal is in trouble.
  */
 export default function HerdGrid({ animals, selectedId, onSelect }) {
   if (!animals.length) {
@@ -29,8 +30,11 @@ export default function HerdGrid({ animals, selectedId, onSelect }) {
             onClick={() => onSelect(animal.animal_id)}
           >
             <div className="row">
-              <span className="id">{animal.animal_id}</span>
+              <span className="id">{animal.animal_id}{animal.name ? ` · ${animal.name}` : ''}</span>
               <span className="species">{animal.species}</span>
+            </div>
+            <div className={`owner ${animal.farmer_name ? '' : 'none'}`}>
+              {animal.farmer_name ?? 'No farmer assigned'}
             </div>
 
             <div className="cond">

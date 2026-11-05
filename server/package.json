@@ -6,12 +6,15 @@
   "description": "Cloud sync and health-record API for Smart Farming Animal Dx",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "start": "node init && node src/index.js",
+    "dev": "node init && node --watch src/index.js",
     "seed": "node src/seed.js",
+    "assign-farmers": "node src/assign-farmers.js",
     "test": "node --test test/"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
     "cors": "^2.8.5",

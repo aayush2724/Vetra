@@ -5,8 +5,8 @@
   "type": "module",
   "description": "Farmer and veterinarian dashboard for Smart Farming Animal Dx",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node init && vite",
+    "build": "node init && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
